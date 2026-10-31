@@ -34,7 +34,9 @@ pub enum CreateMode {
     All,
 }
 
-/// Whether an output **file** may overwrite an existing file at its path.
+/// Whether an output **file** may overwrite an existing file at its path.  Expose it as a flag,
+/// e.g. with the `clap` feature `#[arg(long, value_enum, default_value_t)] clobber: Clobber`, or
+/// parse it with `FromStr` under any other argument parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum Clobber {
@@ -137,6 +139,7 @@ impl std::error::Error for ParseValueError {}
 /// consumer's behavior identical.  A tool with several output folders holds one `DestPolicy` per
 /// folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DestPolicy {
     /// Create missing directories per the mode (`CreateMode::None` = must already exist); no marker.
     Create(CreateMode),
@@ -231,7 +234,7 @@ pub enum PolicyError {
 
 impl PolicyError {
     /// Always [`crate::exit::USAGE`] (exit 2): a contradictory invocation, not a runtime failure.
-    pub fn exit_code(&self) -> i32 {
+    pub fn exit_code(&self) -> u8 {
         crate::exit::USAGE
     }
 }
@@ -334,7 +337,7 @@ pub enum PathError {
 
 impl PathError {
     /// The process exit code for any path-contract violation: always [`crate::exit::TOOL_ERROR`].
-    pub fn exit_code(&self) -> i32 {
+    pub fn exit_code(&self) -> u8 {
         crate::exit::TOOL_ERROR
     }
 }
@@ -634,6 +637,7 @@ pub fn require_marker(dir: &Path, marker: &str) -> Result<(), PathError> {
 
 /// Facts about a symbolic link, for a caller that wants to apply its own policy.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SymlinkInfo {
     /// The symlink path itself.
     pub link: PathBuf,

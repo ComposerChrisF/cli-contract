@@ -263,7 +263,7 @@ Runnable versions of the snippets above are in `examples/`: `inputs`, `destinati
 
 | Feature | Default | What it adds |
 |---|---|---|
-| `clap` | on | `clap::ValueEnum` for `CreateMode` and `Clobber`, so a clap tool takes them as `value_enum` flags |
+| `clap` | off | `clap::ValueEnum` for `CreateMode` and `Clobber`, so a clap tool takes them as `value_enum` flags |
 
 Without the feature, both types still implement `FromStr` and `Display` with the same spellings
 (`none`, `final`, `all`; `allow`, `deny`), for any other argument parser.  A string that names none

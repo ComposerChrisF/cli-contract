@@ -21,19 +21,19 @@ fn main() {
                 DestPolicy::from_flags(CreateMode::None, Some(marker.clone()))
             {
                 eprintln!("error: the marker '{marker}' is not a name: the value {fault}");
-                std::process::exit(exit::USAGE);
+                std::process::exit(exit::USAGE.into());
             }
             require_input_dir(Path::new(dir), Some(marker.as_str()))
         }
         _ => {
             eprintln!("usage: inputs <path>  |  inputs <dir> <marker>");
-            std::process::exit(exit::USAGE);
+            std::process::exit(exit::USAGE.into());
         }
     };
     // Every path-contract error names the path and the fact on disk, and exits 1.
     if let Err(e) = result {
         eprintln!("error: {e}");
-        std::process::exit(e.exit_code());
+        std::process::exit(e.exit_code().into());
     }
     println!("ok");
 }

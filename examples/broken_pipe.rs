@@ -32,7 +32,7 @@ fn main() -> io::Result<()> {
         }
         _ => {
             eprintln!("usage: broken_pipe list|work");
-            std::process::exit(exit::USAGE);
+            std::process::exit(exit::USAGE.into());
         }
     }
     Ok(())

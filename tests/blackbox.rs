@@ -752,7 +752,7 @@ fn the_inputs_example_exits_2_for_a_marker_on_argv_that_is_not_a_name() {
             .arg(marker)
             .output()
             .unwrap();
-        if out.status.code() != Some(exit::USAGE) {
+        if out.status.code() != Some(exit::USAGE.into()) {
             wrong.push(format!(
                 "inputs {} {marker:?}: exit {:?}: {}",
                 dir.display(),

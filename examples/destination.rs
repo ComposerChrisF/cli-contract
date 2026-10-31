@@ -42,7 +42,7 @@ fn main() {
     // A marker that is not a name, or a marker with a creating mode, is wrong on its face: exit 2.
     let policy = DestPolicy::from_flags(mode, marker).unwrap_or_else(|e| {
         eprintln!("error: {e}");
-        std::process::exit(e.exit_code());
+        std::process::exit(e.exit_code().into());
     });
     // The same contract verdicts either way; only the live run writes.
     let result = if dry_run {
@@ -52,7 +52,7 @@ fn main() {
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
-        std::process::exit(e.exit_code());
+        std::process::exit(e.exit_code().into());
     }
     if dry_run {
         println!("ok: {} (dry run: nothing was created)", dest.display());
@@ -67,5 +67,5 @@ fn usage(message: &str) -> ! {
         "usage: destination [--create-destination none|final|all] [--require-marker <name>] \
          [--dry-run] <dir>"
     );
-    std::process::exit(exit::USAGE)
+    std::process::exit(exit::USAGE.into())
 }

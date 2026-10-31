@@ -1,0 +1,14 @@
+# cargo-release configuration: publish only.
+#
+# The maintainer's commit workflow bumps the version and commits on every change, so
+# cargo-release never bumps or commits here.  Only its step subcommands run, against the version
+# already committed on main:
+#
+#   cargo release publish        # dry run; -x to publish
+#   cargo release tag            # tag cli-contract-v<version> on the current commit; -x to tag
+#   cargo release push           # push the tag and main to origin; -x to push
+#
+# Never `cargo release <level>` or `cargo release version`: either would bump the version.
+
+allow-branch = ["main"]
+tag-name = "{{crate_name}}-v{{version}}"

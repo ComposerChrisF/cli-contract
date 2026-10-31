@@ -27,7 +27,7 @@ Two candidates, not exclusive:
 
 ## Implementation Notes
 
-- Either is additive: a new `DestPolicy` variant, or a new function beside `check_destination`.  `DestPolicy` is not `#[non_exhaustive]` today; the 0.6.0 release is to add it, after which a new variant is not a breaking change.
+- Either is additive: a new `DestPolicy` variant, or a new function beside `check_destination`.  `DestPolicy` is `#[non_exhaustive]` from 0.6.0, so a new variant is not a breaking change.
 - Candidate 2, as stated, holds only when the base of the chain is the mount point itself.  A tool that creates a folder deeper on a mounted volume has a base below the mount point, on the same device as its parent, so the check would refuse a legitimate create.  It must instead find the nearest ancestor whose parent is on another device and require that one to be the expected mount, which brings back candidate 1’s “which ancestor?” question.
 - Tests: on Linux a tmpfs needs root, so the identity test may be manual, or use an existing mount such as `/proc` or `/dev/shm` as the “live” case.
 - A tool’s `--help` names the policy, so the flag spelling (`--require-mounted`, or `--require-marker` with an ancestor) is part of the design.

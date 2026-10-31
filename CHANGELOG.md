@@ -4,7 +4,7 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-10-31
 
 The first public release.
 
@@ -23,4 +23,10 @@ The first public release.
 
 ### Changed
 
-- **`clap` is no longer a default feature.**  A tool that takes `CreateMode` or `Clobber` as a clap `value_enum` adds `features = ["clap"]`.  This affects only users of the unpublished versions before 0.6.0.
+- **`clap` is no longer a default feature.**  A tool that takes `CreateMode` or `Clobber` as a clap `value_enum` adds `features = ["clap"]`.
+- **The exit codes are `u8`**: the five constants and both `exit_code()` methods, as `std::process::ExitCode::from` takes them.  `std::process::exit` takes one with `.into()`, and an `as u8` cast at a call site is now redundant.  Code that holds or compares a code as `i32` (`status.code() == Some(…)`, a helper that takes an `i32`) converts it with `.into()` or `i32::from`.
+- **`SymlinkInfo` and `DestPolicy` are `#[non_exhaustive]`**, so a later field or policy is not a breaking change.  A `DestPolicy` is still built from its variants or by `from_flags`; a `match` on one needs a wildcard arm.  A `SymlinkInfo` comes only from `symlink_info`, and a pattern on one needs `..`.
+
+These affect only users of the unpublished versions before 0.6.0.
+
+[0.6.0]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.0

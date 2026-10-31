@@ -6,17 +6,20 @@
 //! reliable across every tool that adopts them.  The one load-bearing rule is that **findings never
 //! exit 1**: exit 1 must always mean "the tool itself failed", which is what lets a caller
 //! distinguish "act on the findings" from "retry or debug the tool".
+//!
+//! The codes are `u8`, which [`std::process::ExitCode`] takes through `From<u8>`;
+//! `std::process::exit` takes one with `.into()`.
 
 /// Success / clean — including a dry-run and a legitimate no-op.
-pub const OK: i32 = 0;
+pub const OK: u8 = 0;
 /// The tool itself failed: I/O, a missing caller-asserted path, a parse failure of its own input.
 ///
 /// This is also the caller-claim/world-mismatch code, in either direction (a missing input that
 /// should exist, a missing output directory in must-exist mode, an existing target under
 /// no-clobber) — see [`crate::paths`].
-pub const TOOL_ERROR: i32 = 1;
+pub const TOOL_ERROR: u8 = 1;
 /// Usage error — bad command-line arguments (clap's default; never repurpose it).
-pub const USAGE: i32 = 2;
+pub const USAGE: u8 = 2;
 /// Findings — the tool ran correctly and found problems (validation failures, drift, staleness).
 /// Findings never exit 1.
 ///
@@ -39,9 +42,9 @@ pub const USAGE: i32 = 2;
 /// the output, and not the non-zero exit.  That is about a result found during the run.  A
 /// caller-asserted input the tool cannot read stops the run, and is a tool error (exit 1) in any
 /// tool, as the path contract says.
-pub const FINDINGS: i32 = 3;
+pub const FINDINGS: u8 = 3;
 /// Setup needed — no config/ledger/manifest; not initialized; missing prerequisite state.
-pub const SETUP: i32 = 4;
+pub const SETUP: u8 = 4;
 
 /// The canonical exit-code table, ready to hand to clap's `after_long_help` so every tool documents
 /// the same semantics verbatim.
