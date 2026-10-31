@@ -1,0 +1,43 @@
+[package]
+name = "cli-contract"
+version = "0.5.24"
+edition = "2021"
+# Not yet published — this crate IS bound for open-source release, but the flip
+# to publishable is the deliberate act of that first release, not a default.
+# The tarball is an allowlist, so a new file is not shipped unless named here;
+# CI's package job checks the list.
+publish = false
+include = ["src/**", "examples/**", "README.md", "CHANGELOG.md", "SECURITY.md", "LICENSE-*", "Cargo.toml"]
+# 1.79 stabilized `std::path::absolute`, which the mount-root floor needs to compare the components
+# the OS will actually resolve rather than the caller's spelling (see `is_mount_root`).
+rust-version = "1.79"
+description = "A shared contract for command-line tools: canonical exit codes, a path contract that refuses to guess (with a mount-root floor), and BrokenPipe handling."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ComposerChrisF/cli-contract"
+readme = "README.md"
+keywords = ["cli", "exit-code", "path", "sigpipe", "mount-point"]
+categories = ["command-line-interface", "filesystem"]
+
+[dependencies]
+clap = { version = "4", optional = true, default-features = false, features = ["std", "derive"] }
+
+# `clap` is on by default only until the crates.io release, which turns it off: until then the
+# dependents build this crate by path, and the five that use the derives do so without naming
+# the feature.
+[features]
+default = ["clap"]
+clap = ["dep:clap"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Drop-guarded temp dirs: the permission fixtures below chmod 000, and a failed assertion must not
+# leave undeletable litter behind.
+tempfile = "3"
+# `set_current_dir` is process-global; cargo runs tests in parallel threads, so the cwd-dependent
+# floor tests must serialize or they race each other.
+serial_test = "3"

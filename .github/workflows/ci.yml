@@ -1,0 +1,91 @@
+name: CI
+
+# Every push and pull request, on every branch.  A commit that touches only TODO.md, bugs/, or
+# plans/ builds nothing; the leak gate, in leak.yml, runs on every change.
+on:
+  push:
+    paths-ignore: ["TODO.md", "bugs/**", "plans/**"]
+  pull_request:
+    paths-ignore: ["TODO.md", "bugs/**", "plans/**"]
+
+# A newer push to the same ref supersedes a run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.features }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Both sets named, so the matrix still covers both when the default changes.
+        features: ["--no-default-features", "--features clap"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test ${{ matrix.features }}
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # The locked clap needs a newer Rust than the declared rust-version, so resolve as an
+      # MSRV-aware consumer would, then check on that version.
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo generate-lockfile
+        env:
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.79.0"
+      - run: cargo check --no-default-features
+      - run: cargo check --features clap
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings -D missing_docs
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo package
+      # The tarball holds only Cargo.toml's `include` allowlist, plus the files Cargo adds itself.
+      - name: tarball holds only the allowlist
+        run: |
+          list=$(cargo package --list)
+          unexpected=$(printf '%s\n' "$list" | grep -v -E '^(src/.+|examples/.+|README\.md|CHANGELOG\.md|SECURITY\.md|LICENSE-.+|Cargo\.toml|Cargo\.toml\.orig|Cargo\.lock|\.cargo_vcs_info\.json)$' || true)
+          if [ -n "$unexpected" ]; then
+            printf 'not in the allowlist:\n%s\n' "$unexpected"
+            exit 1
+          fi

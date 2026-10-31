@@ -1,0 +1,17 @@
+name: Leak gate
+
+# Every push and pull request, on every branch, whatever it touches: TODO.md, bugs/, and plans/
+# are published too wherever no .leak-gate-exclude keeps them out, so no path is ignored here.
+on: [push, pull_request]
+
+# A newer push to the same ref supersedes a run still in progress.
+concurrency:
+  group: leak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  leak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: scripts/leak-gate
