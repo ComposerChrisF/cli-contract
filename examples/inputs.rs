@@ -7,9 +7,7 @@
 
 use std::path::Path;
 
-use cli_contract::{
-    exit, require_input_dir, require_input_path, CreateMode, DestPolicy, PolicyError,
-};
+use cli_contract::{exit, require_input_path, require_marker, MarkerName};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -17,13 +15,13 @@ fn main() {
         [path] => require_input_path(Path::new(path)),
         [dir, marker] => {
             // A marker that is not a name is wrong on its face: exit 2, before looking at the disk.
-            if let Err(PolicyError::MarkerNotAName { fault, .. }) =
-                DestPolicy::from_flags(CreateMode::None, Some(marker.clone()))
-            {
-                eprintln!("error: the marker '{marker}' is not a name: the value {fault}");
+            // The error carries no exit code; from a config file it would be exit 1.
+            let marker = marker.parse::<MarkerName>().unwrap_or_else(|e| {
+                eprintln!("error: {e}");
                 std::process::exit(exit::USAGE.into());
-            }
-            require_input_dir(Path::new(dir), Some(marker.as_str()))
+            });
+            // Refuses a missing directory, or a file, as `require_input_dir` does; then the marker.
+            require_marker(Path::new(dir), &marker)
         }
         _ => {
             eprintln!("usage: inputs <path>  |  inputs <dir> <marker>");

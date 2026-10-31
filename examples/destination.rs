@@ -11,11 +11,13 @@
 
 use std::path::PathBuf;
 
-use cli_contract::{check_destination, ensure_destination, exit, CreateMode, DestPolicy};
+use cli_contract::{
+    check_destination, ensure_destination, exit, CreateMode, DestPolicy, MarkerName,
+};
 
 fn main() {
     let mut mode = CreateMode::None;
-    let mut marker = None;
+    let mut marker: Option<MarkerName> = None;
     let mut dry_run = false;
     let mut dest = None;
     let mut args = std::env::args().skip(1);
@@ -26,8 +28,10 @@ fn main() {
                 Some(Err(e)) => usage(&format!("--create-destination: {e}")),
                 None => usage("--create-destination needs a value"),
             },
-            "--require-marker" => match args.next() {
-                Some(name) => marker = Some(name),
+            // A marker that is not a name is wrong on its face: exit 2, before looking at the disk.
+            "--require-marker" => match args.next().map(|value| value.parse()) {
+                Some(Ok(parsed)) => marker = Some(parsed),
+                Some(Err(e)) => usage(&format!("--require-marker: {e}")),
                 None => usage("--require-marker needs a value"),
             },
             "--dry-run" => dry_run = true,
@@ -39,7 +43,7 @@ fn main() {
         usage("a destination directory is required")
     };
 
-    // A marker that is not a name, or a marker with a creating mode, is wrong on its face: exit 2.
+    // A marker with a creating mode is wrong on its face: exit 2.
     let policy = DestPolicy::from_flags(mode, marker).unwrap_or_else(|e| {
         eprintln!("error: {e}");
         std::process::exit(e.exit_code().into());

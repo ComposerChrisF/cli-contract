@@ -47,13 +47,16 @@ to read.
 ### Inputs
 
 ```rust,ignore
-require_input_path(path)?;               // missing -> exit 1, and never created
-require_input_dir(dir, Some("audio"))?;  // must exist AND contain the marker
+require_input_path(path)?;      // missing -> exit 1, and never created
+require_input_dir(dir)?;        // must exist, and be a directory
+require_marker(dir, &marker)?;  // in its place: must exist, be a directory, AND contain the marker
 ```
 
 A missing caller-asserted input is never auto-created: creating it would launder a typo into
 permanent world state and manufacture the silent-wrong-output failure (empty input, plausible empty
-output, exit 0).
+output, exit 0).  An input directory that must be a specific one takes a marker (below):
+`require_marker` refuses a missing directory or a file just as `require_input_dir` does, so it is
+called instead of `require_input_dir`, not after it.
 
 ### Output directories — must-exist by default
 
@@ -66,7 +69,18 @@ both require the parent).  Creation is an opt-in spectrum, exposed as a flag:
 | `Final` | create the one final directory, only if _its_ parent already exists |
 | `All` | create the whole missing chain, one level at a time below the deepest directory that exists |
 
+Take the mode and an optional marker (below) as flags: with the `clap` feature as here, or under any
+other argument parser through their `FromStr`.
+
 ```rust,ignore
+#[derive(clap::Parser)]
+struct Args {
+    #[arg(long, value_enum, default_value_t)]
+    create_destination: CreateMode,
+    #[arg(long)]
+    require_marker: Option<MarkerName>, // a value that is not a name is a usage error (exit 2)
+}
+
 let policy = DestPolicy::from_flags(args.create_destination, args.require_marker)?;
 ensure_destination(&dest, &policy)?;
 ```
@@ -137,13 +151,15 @@ so `--require-marker` together with `--create-destination=final|all` is a contra
 `DestPolicy::from_flags` rejects it as a **usage error (exit 2)** rather than silently dropping the
 mode.
 
-**A marker is a name, never a path** — exactly one path component.  An empty value, an absolute
-path, a value containing a separator, `.`/`..`, or, on Windows, a value made only of dots and spaces
-or a drive prefix (`C:`, `C:x`) is refused by `from_flags` as a **usage error (exit 2)**, and by
-`require_marker` itself for a caller that never went through the flags — there as a `PathError`
-(exit 1), because the crate cannot tell whether the value came from argv or from a config file;
-validate at the flag boundary to get the usage code.  The reason is what `Path::join` does with a
-non-name: an absolute value _replaces_ the directory, `..` escapes it, and the empty string names
+**A marker is a name, never a path** — exactly one path component, held as a `MarkerName`.  An
+empty value, an absolute path, a value containing a separator, `.`/`..`, or, on Windows, a value
+made only of dots and spaces or a drive prefix (`C:`, `C:x`) is refused when a `MarkerName` is
+made, by `MarkerName::new` or by parsing one, as a `MarkerNameError` — so no `DestPolicy::Marked`
+and no call to `require_marker` can hold one.  The error carries no exit code, because the crate
+cannot tell where a value came from; the caller can.  For a flag typed `Option<MarkerName>`, clap
+reports a bad value as a **usage error (exit 2)**; a caller parsing the tool’s own config file maps
+the error to exit 1, since the file is the tool’s input.  The reason is what `Path::join` does with
+a non-name: an absolute value _replaces_ the directory, `..` escapes it, and the empty string names
 the directory itself — so each of those made the guard test some other path and pass for every
 destination on earth, silently.  On Windows a name made only of dots and spaces does the same,
 because Windows drops a name’s trailing dots and spaces when it opens the path.
@@ -180,19 +196,14 @@ Everything composes from primitives; there is no fixed policy enum:
   itself a link (`IsSymlink`).  It asks whether the destination itself is a link, not whether its
   ancestors are: `link/sub` passes when `link` leads to a directory, and lands through `link`.  A
   destination that cannot exist, because a file or a dangling link stands above it, is refused
-  with the error that names that entry.  A caller that needs more checks each ancestor with
-  `symlink_info`, or proves the disk with the marker guard.
-- **Caller decides** — `symlink_info(&dest)?` returns the link, its target, the resolved path, and
-  whether it is a directory or dangling: enough to prompt, log, or apply a tool-specific rule.
-  `Ok(None)` means proven not-a-link; a link that could not be inspected is an error, never a
-  cheerful “not a link” that would fail your guard open.  A path below a file or a dangling link
-  is the error that names that entry, as under Reject.
-- **Resolve-and-re-floor** — compose it: `is_mount_root(resolved)` on the `resolved` field of
-  `symlink_info(&dest)?` catches a link that resolves onto a mount root.  A link into an unmounted
-  volume is dangling, and `ensure_destination` already refuses it as `DanglingSymlink`; a link onto
-  a mount point that outlived its volume is not, and only this recipe (for a listed root) or a
-  marker catches it.  On Windows `is_mount_root` is `false` for every path it can resolve, so the
-  recipe catches nothing there.
+  with the error that names that entry.  A caller that needs more proves the disk with the marker
+  guard, or checks each ancestor itself, in a walk that refuses on every error but the one that
+  proves an ancestor absent: `NotFound`, and nothing else.
+- **Prove the disk** — a marker is looked for in the destination as the OS resolves it, through any
+  link, so a link that leads somewhere unintended is refused there: the marker is not found.  A
+  link into an unmounted volume is dangling, and `ensure_destination` already refuses it as
+  `DanglingSymlink`; a link onto a mount point that outlived its volume is not, and only a marker
+  catches it.
 
 ## 2.  Exit codes
 

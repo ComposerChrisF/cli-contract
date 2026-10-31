@@ -110,7 +110,7 @@ fn policies() -> Vec<DestPolicy> {
         DestPolicy::Create(CreateMode::None),
         DestPolicy::Create(CreateMode::Final),
         DestPolicy::Create(CreateMode::All),
-        DestPolicy::Marked(MARKER.to_string()),
+        DestPolicy::Marked(MARKER.parse().unwrap()),
     ]
 }
 

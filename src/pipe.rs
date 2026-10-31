@@ -39,6 +39,7 @@ pub fn reset_sigpipe() {
 }
 
 /// True if `err` is a broken-pipe error — the reader on the other end of the pipe has closed.
+#[must_use]
 pub fn is_broken_pipe(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::BrokenPipe
 }

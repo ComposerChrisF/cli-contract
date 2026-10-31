@@ -6,12 +6,8 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 
 ## The release
 
-- [ ] **Publish 0.6.0 to crates.io.**  The release commit:
-  - turns the `clap` feature off by default, with the README’s Features line and the manifest’s
-    comment on the interim default;
-  - adds `#[non_exhaustive]` to `SymlinkInfo` and `DestPolicy`;
-  - makes the exit constants and both `exit_code()` methods `u8`;
-  - and drops `publish = false`.
+- [ ] **Publish 0.6.0 to crates.io.**  The release commit makes the API changes the CHANGELOG
+  lists under 0.6.0, and drops `publish = false`.
 
   After publishing, check that docs.rs renders the page with the clap impls visible, and that the
   `.crate`’s normalized `Cargo.toml` says `default = []`.  Then set the semver baseline, so every
@@ -47,11 +43,13 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 
 - [ ] [plan-0015](plans/plan-0015-the-floors-three-state-answer-in-public.md) — **the floor’s
   three-state answer, in public**: `is_mount_root` folds “could not tell” into `true`, so a caller
-  cannot say why it refused.  Make the private `Result<bool, PathError>` form public.  Additive.
+  composing its own floor check cannot say why it refused.  Make the private
+  `Result<bool, PathError>` form public.  Additive.
 
-- [ ] [plan-0016](plans/plan-0016-a-public-marker-name-check.md) — **a public marker-name check**,
-  so a tool can refuse an input directory’s marker as a usage error without building a throwaway
-  `DestPolicy`.  Additive.
+- [ ] [plan-0017](plans/plan-0017-a-three-state-symlink-facts-primitive.md) — **a three-state
+  symlink-facts primitive**: the “crate reports, caller decides” primitive behind a per-tool
+  symlink policy, back in a shape that cannot fail open, every unknown an `Err`, never a `None`.
+  `symlink_info` was removed before 0.6.0 for failing open.  Additive.
 
 ## Smaller items
 
@@ -62,7 +60,6 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 
 - [ ] **Nits from the pre-launch audit**, none a broken promise:
   - `Undeterminable`’s rustdoc says “see the module docs”, which say nothing about it;
-  - `require_input_dir` probes the directory before it checks the marker’s name;
   - `create_after_check`’s bare `is_dir()` is correct, but reads as the bool collapse the module
     forbids;
   - the README cites `ROADMAP.md`, which the package leaves out;

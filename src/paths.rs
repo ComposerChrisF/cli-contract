@@ -130,46 +130,133 @@ impl std::error::Error for ParseValueError {}
 
 /// A validated creation-and-marker policy for a destination directory.
 ///
-/// Construct it with [`DestPolicy::from_flags`], which rejects two things as usage errors: a
-/// marker that is not a name, and the one incoherent combination — a marker together
-/// with a *creating* mode — since a marked directory must already exist, so it cannot also be
-/// created.  The combination cannot be represented at all, since `Marked` carries no mode; a
-/// `Marked` value built directly has its name checked when used, by [`require_marker`].  Refusing
-/// both (rather than silently dropping the mode, or silently probing the wrong path) keeps every
-/// consumer's behavior identical.  A tool with several output folders holds one `DestPolicy` per
-/// folder.
+/// Take the two flags as a [`CreateMode`] and an `Option<MarkerName>`: with the `clap` feature,
+/// `#[arg(long)] require_marker: Option<MarkerName>` beside the mode's `value_enum`, or parsed by
+/// any other argument parser through their `FromStr`.  Then construct the policy with
+/// `DestPolicy::from_flags(args.create_destination, args.require_marker)?`.
+///
+/// Two things are refused as usage errors.  A marker that is not a name is refused first, when
+/// its [`MarkerName`] is made, as a [`MarkerNameError`] (clap reports it for a flag so typed).
+/// [`DestPolicy::from_flags`] refuses the one incoherent combination — a marker together with a
+/// *creating* mode — since a marked directory must already exist, so it cannot also be created.
+/// Neither can be represented at all: `Marked` carries no mode, and it holds a [`MarkerName`],
+/// which cannot be a non-name, so a `Marked` value built directly is as sound as one from
+/// `from_flags`.  Refusing both (rather than silently dropping the mode, or silently probing the
+/// wrong path) keeps every consumer's behavior identical.  A tool with several output folders
+/// holds one `DestPolicy` per folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DestPolicy {
     /// Create missing directories per the mode (`CreateMode::None` = must already exist); no marker.
     Create(CreateMode),
     /// The directory must already exist and contain the named marker file/dir.  The value is a
-    /// name — one path component, validated by [`DestPolicy::from_flags`] and again by
-    /// [`require_marker`] — never a path.
-    Marked(String),
+    /// name — one path component — never a path.
+    Marked(MarkerName),
 }
 
 impl DestPolicy {
     /// Map the two command-line flags — `--create-destination <mode>` and an optional
-    /// `--require-marker <name>` — to a validated policy, rejecting a marker that is not a name
-    /// and `--require-marker` combined with `--create-destination=final|all`.  Both are
-    /// usage errors: neither needs the filesystem to decide, and the caller's only remedy is to
+    /// `--require-marker <name>` — to a validated policy.  Its one refusal is `--require-marker`
+    /// combined with `--create-destination=final|all`, as [`PolicyError::MarkerWithCreate`]: a
+    /// usage error, since it needs no filesystem to decide, and the caller's only remedy is to
     /// change the command line.
-    pub fn from_flags(mode: CreateMode, marker: Option<String>) -> Result<Self, PolicyError> {
+    ///
+    /// The marker's name was checked before this call, when its [`MarkerName`] was made; for a
+    /// clap flag typed `Option<MarkerName>`, clap reports a non-name as a usage error before
+    /// `from_flags` runs.  So the name fault is still reported first: with a non-name marker and a
+    /// creating mode the caller has two mistakes, and fixing the mode alone would only surface the
+    /// name a run later.
+    pub fn from_flags(mode: CreateMode, marker: Option<MarkerName>) -> Result<Self, PolicyError> {
         let Some(marker) = marker else {
             return Ok(DestPolicy::Create(mode));
         };
-        // The value fault first: with a creating mode the caller has two mistakes, and fixing the
-        // mode alone would only surface this one a run later.
-        if let Some(fault) = marker_name_fault(&marker) {
-            return Err(PolicyError::MarkerNotAName { marker, fault });
-        }
         match mode {
             CreateMode::None => Ok(DestPolicy::Marked(marker)),
             CreateMode::Final | CreateMode::All => Err(PolicyError::MarkerWithCreate),
         }
     }
 }
+
+/// The name of a marker: a file or directory whose presence inside a directory proves it is the
+/// one meant ([`require_marker`], [`DestPolicy::Marked`]).  It is exactly one path component, never
+/// a path, so the guard always looks inside the directory it was handed.
+///
+/// [`MarkerName::new`], and `FromStr`, which calls it, refuse every value that is not a name, as
+/// a [`MarkerNameError`]: the empty string, an absolute path, a value containing a path
+/// separator, `.` or `..`, and on Windows a value made only of dots and spaces (Windows drops a
+/// name's trailing dots and spaces, so it names the directory itself) or a drive prefix (`C:`,
+/// `C:x`).  `Path::join` reinterprets each of those — an absolute value *replaces* the directory,
+/// `..` escapes it, a separator descends, the empty string is the directory itself — so a guard
+/// handed one would test some other path, and pass for every directory on earth.
+///
+/// A clap flag can be typed `Option<MarkerName>`, and clap reports a bad value as a usage error
+/// (exit 2).  Where else the error goes, and with which exit code, is the caller's to choose (see
+/// [`MarkerNameError`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MarkerName(String);
+
+impl MarkerName {
+    /// Take `name` as a marker name, or refuse it as a [`MarkerNameError`] when it is not one path
+    /// component.
+    pub fn new(name: impl Into<String>) -> Result<MarkerName, MarkerNameError> {
+        let marker = name.into();
+        match marker_name_fault(&marker) {
+            Some(fault) => Err(MarkerNameError { marker, fault }),
+            None => Ok(MarkerName(marker)),
+        }
+    }
+
+    /// The name, as given.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for MarkerName {
+    type Err = MarkerNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        MarkerName::new(s)
+    }
+}
+
+impl fmt::Display for MarkerName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A value that is not a marker name: the error of [`MarkerName::new`] and of its `FromStr`.  It
+/// is empty, absolute, contains a path separator, is `.`/`..`, or (on Windows) is only dots and
+/// spaces or a drive prefix (`C:`, `C:x`); `fault` says which.  Its message names no flag, since a
+/// [`MarkerName`] is made from a flag of any spelling, a config file, or anywhere else.
+///
+/// `FromStr` cannot see where the string came from, so the exit code is the caller's to choose: a
+/// usage error ([`crate::exit::USAGE`], exit 2) for a value from the command line, which clap
+/// reports as one for a flag typed `MarkerName`; a tool error ([`crate::exit::TOOL_ERROR`], exit 1)
+/// for a value from the tool's own config file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MarkerNameError {
+    /// The value as given.
+    pub marker: String,
+    /// Why it is not a name, in words that complete "the value ...".
+    pub fault: &'static str,
+}
+
+impl fmt::Display for MarkerNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "marker '{}' is not a name: the value {}.  A marker is a single file or directory name \
+             looked for inside a directory, never a path",
+            self.marker, self.fault
+        )
+    }
+}
+
+impl std::error::Error for MarkerNameError {}
 
 /// Why `marker` is not a name — `None` when it is one.  A marker is exactly one normal path
 /// component: `Path::join` reinterprets every other shape (an absolute value *replaces* the
@@ -209,31 +296,24 @@ fn marker_name_fault(marker: &str) -> Option<&'static str> {
     }
 }
 
-/// A command line wrong on its face — a contradictory flag combination, or a value no state of
-/// the filesystem could make meaningful — a usage error ([`crate::exit::USAGE`], exit 2), distinct
-/// from a runtime [`PathError`] (exit 1).
+/// A policy wrong on its face — a contradictory combination of flags — distinct from a runtime
+/// [`PathError`] (exit 1): the error of [`DestPolicy::from_flags`].  A marker that is not a name
+/// is not one: it is refused before, as a [`MarkerNameError`], when its [`MarkerName`] is made.
 ///
-/// Its messages name the conventional flags, `--require-marker` and `--create-destination`.  A
-/// tool whose flags are spelled otherwise renders the variant itself: both variants are public,
-/// with their fields.
+/// [`PolicyError::MarkerWithCreate`]'s message names the conventional flags, `--require-marker` and
+/// `--create-destination`.  A tool that spells them otherwise renders the variant itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PolicyError {
     /// `--require-marker` was combined with `--create-destination=final|all`.
     MarkerWithCreate,
-    /// The `--require-marker` value is not a name: it is empty, absolute, contains a
-    /// path separator, is `.`/`..`, or (on Windows) is only dots and spaces or a drive prefix
-    /// (`C:`, `C:x`).  `fault` says which, in words that complete "the value ...".
-    MarkerNotAName {
-        /// The value as given.
-        marker: String,
-        /// Why it is not a name, in words that complete "the value ...".
-        fault: &'static str,
-    },
 }
 
 impl PolicyError {
-    /// Always [`crate::exit::USAGE`] (exit 2): a contradictory invocation, not a runtime failure.
+    /// Always [`crate::exit::USAGE`] (exit 2), for flags: an invocation wrong on its face, not a
+    /// runtime failure.  A policy assembled from a config file is the tool's own input, so exit 1
+    /// ([`crate::exit::TOOL_ERROR`]); the caller chooses.
+    #[must_use]
     pub fn exit_code(&self) -> u8 {
         crate::exit::USAGE
     }
@@ -248,11 +328,6 @@ impl fmt::Display for PolicyError {
                  directory must already exist (a marker cannot be pre-placed in a directory you are \
                  also creating)"
             ),
-            PolicyError::MarkerNotAName { marker, fault } => write!(
-                f,
-                "--require-marker '{marker}' is not a name: the value {fault}.  A marker is a single \
-                 file or directory name looked for inside the destination, never a path"
-            ),
         }
     }
 }
@@ -262,11 +337,7 @@ impl std::error::Error for PolicyError {}
 /// A violation of the path contract.  Every variant maps to [`crate::exit::TOOL_ERROR`] (exit 1);
 /// render it to stderr and exit with [`PathError::exit_code`].  Most are caller-claim/world
 /// mismatches.  [`PathError::Undeterminable`] (the path could not be inspected) and
-/// [`PathError::Io`] (a create that failed after the checks passed) are the tool failing instead,
-/// and [`PathError::MarkerNotAName`] is a bad value handed straight to [`require_marker`] — the
-/// crate cannot tell there whether it came from argv or from a config file, so it stays 1.  A tool
-/// that wants the usage code (2) for a bad `--require-marker` validates at the flag boundary with
-/// [`DestPolicy::from_flags`], which refuses the same values as a [`PolicyError`].
+/// [`PathError::Io`] (a create that failed after the checks passed) are the tool failing instead.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PathError {
@@ -301,17 +372,6 @@ pub enum PathError {
         /// The marker name not found inside it.
         marker: String,
     },
-    /// The marker value handed to [`require_marker`] is not a name — empty, absolute, containing a
-    /// path separator, `.`/`..`, or (on Windows) only dots and spaces or a drive prefix (`C:`,
-    /// `C:x`).  A caller that built its policy through [`DestPolicy::from_flags`] never sees this:
-    /// the same check refuses the value there as a [`PolicyError`].  It exists so a direct caller
-    /// cannot have the guard silently probe some other path.
-    MarkerNotAName {
-        /// The value as given.
-        marker: String,
-        /// Why it is not a name, in words that complete "the value ...".
-        fault: &'static str,
-    },
     /// The output file already exists and clobbering was refused ([`Clobber::Deny`]).
     Clobber(PathBuf),
     /// **The path could not be inspected at all** — permission denied, an I/O error, a symlink
@@ -337,6 +397,7 @@ pub enum PathError {
 
 impl PathError {
     /// The process exit code for any path-contract violation: always [`crate::exit::TOOL_ERROR`].
+    #[must_use]
     pub fn exit_code(&self) -> u8 {
         crate::exit::TOOL_ERROR
     }
@@ -391,11 +452,6 @@ impl fmt::Display for PathError {
                 "directory {} is missing its required marker '{}' (is this the intended target?)",
                 dir.display(),
                 marker
-            ),
-            PathError::MarkerNotAName { marker, fault } => write!(
-                f,
-                "marker '{marker}' is not a name: the value {fault}.  A marker is a single file or \
-                 directory name looked for inside the directory, never a path"
             ),
             PathError::Clobber(p) => {
                 write!(f, "refusing to overwrite an existing file: {}", p.display())
@@ -536,19 +592,24 @@ fn probe_target(path: &Path) -> Result<Presence, PathError> {
 /// and a link to nothing is [`PathError::DanglingSymlink`].  So is either one above `path`, under
 /// every policy and on every platform, because [`probe`] names what stands in the way.
 fn probe_dir(path: &Path) -> Result<Presence, PathError> {
-    let ft = match probe(path)? {
-        Presence::Absent => return Ok(Presence::Absent),
-        Presence::Present(ft) if ft.is_symlink() => match probe_target(path)? {
-            // A dangling link exists as a link but resolves to nothing — that fact, never "missing".
-            Presence::Absent => return Err(PathError::DanglingSymlink(path.to_path_buf())),
-            Presence::Present(target) => target,
-        },
-        Presence::Present(ft) => ft,
-    };
-    if !ft.is_dir() {
-        return Err(PathError::NotADirectory(path.to_path_buf()));
+    match probe_resolved(path)? {
+        Presence::Present(ft) if !ft.is_dir() => Err(PathError::NotADirectory(path.to_path_buf())),
+        presence => Ok(presence),
     }
-    Ok(Presence::Present(ft))
+}
+
+/// [`probe`], with a symlink followed to its target, as the OS resolves it.  `Present` is the
+/// type of what the path resolves to — never a link — and `Absent` is a proven `NotFound` of the
+/// path itself.  A link to nothing is [`PathError::DanglingSymlink`]: it exists as a link but
+/// resolves to nothing, and that fact is reported, never "missing".
+fn probe_resolved(path: &Path) -> Result<Presence, PathError> {
+    match probe(path)? {
+        Presence::Present(ft) if ft.is_symlink() => match probe_target(path)? {
+            Presence::Absent => Err(PathError::DanglingSymlink(path.to_path_buf())),
+            target => Ok(target),
+        },
+        presence => Ok(presence),
+    }
 }
 
 /// Refuse a caller-asserted input path that does not exist.  Never creates it (creating it would
@@ -557,49 +618,35 @@ fn probe_dir(path: &Path) -> Result<Presence, PathError> {
 /// A path that could not be inspected is [`PathError::Undeterminable`], never
 /// [`PathError::MissingInput`]: absence is claimed only on a proven `NotFound`.
 pub fn require_input_path(path: &Path) -> Result<(), PathError> {
-    match probe(path)? {
+    match probe_resolved(path)? {
         Presence::Absent => Err(PathError::MissingInput(path.to_path_buf())),
-        Presence::Present(ft) if ft.is_symlink() => match probe_target(path)? {
-            Presence::Absent => Err(PathError::DanglingSymlink(path.to_path_buf())),
-            Presence::Present(_) => Ok(()),
-        },
         Presence::Present(_) => Ok(()),
     }
 }
 
-/// Refuse a caller-asserted input **directory** that does not exist, and — when `marker` is given —
-/// that does not contain the named marker file/dir.  Never creates anything.  The marker is the
-/// same "is this the directory I actually mean?" guard used on output folders (see
-/// [`ensure_destination`]); use it for an input dir that must be a specific one, e.g. a media
-/// directory that must contain its mapped subfolders.
-pub fn require_input_dir(path: &Path, marker: Option<&str>) -> Result<(), PathError> {
-    // The file type as the OS would resolve it: a symlink is followed, so a link to a directory
-    // is usable as one, and a link to nothing is reported as dangling rather than as missing.
-    let resolved = match probe(path)? {
-        Presence::Absent => return Err(PathError::MissingInput(path.to_path_buf())),
-        Presence::Present(ft) if ft.is_symlink() => match probe_target(path)? {
-            Presence::Absent => return Err(PathError::DanglingSymlink(path.to_path_buf())),
-            Presence::Present(target) => target,
-        },
-        Presence::Present(ft) => ft,
-    };
-    if !resolved.is_dir() {
-        // Exists, but as a file — state that fact rather than claiming it is missing.
-        return Err(PathError::NotADirectory(path.to_path_buf()));
+/// Refuse a caller-asserted input **directory** that does not exist ([`PathError::MissingInput`]),
+/// or that is not a directory.  Never creates anything.
+///
+/// A caller wanting a marker — the same "is this the directory I actually mean?" guard used on
+/// output folders (see [`ensure_destination`]), for an input dir that must be a specific one, e.g.
+/// a media directory that must contain its mapped subfolders — calls
+/// [`require_marker(dir, &marker)`](require_marker) instead.  That call also refuses a missing
+/// directory ([`PathError::MissingInput`]) or a non-directory, and the name is checked before
+/// anything is probed: when its [`MarkerName`] is made.
+pub fn require_input_dir(path: &Path) -> Result<(), PathError> {
+    // A symlink is followed, so a link to a directory is usable as one; a link to nothing, or a
+    // file, is reported as what it is rather than as missing.
+    match probe_dir(path)? {
+        Presence::Absent => Err(PathError::MissingInput(path.to_path_buf())),
+        Presence::Present(_) => Ok(()),
     }
-    if let Some(m) = marker {
-        require_marker(path, m)?;
-    }
-    Ok(())
 }
 
 /// Verify a marker file or directory named `marker` is present inside `dir`.
 ///
-/// `marker` must be a name — one path component — or the call is refused as
-/// [`PathError::MarkerNotAName`] before anything is probed: `dir.join(marker)` would
-/// otherwise test some other path entirely, and a guard that tests the wrong path passes when it
-/// should not.  [`DestPolicy::from_flags`] refuses the same values as a usage error, so a policy
-/// built there never reaches this arm.
+/// `marker` is a [`MarkerName`], one path component, so `dir.join(marker)` is an entry of `dir`:
+/// a value that would make it test some other path entirely — and a guard that tests the wrong
+/// path passes when it should not — was refused when the name was made.
 ///
 /// `MarkerMissing` is claimed only on a proven `NotFound`, inside a directory that exists: a `dir`
 /// that does not exist is [`PathError::MissingInput`].  This is a wrong-disk guard: reporting
@@ -610,86 +657,27 @@ pub fn require_input_dir(path: &Path, marker: Option<&str>) -> Result<(), PathEr
 /// (the entry is inside `dir`, which is what proves the disk).  A **dangling** link is reported
 /// as [`PathError::DanglingSymlink`], never as missing — an entry of that name is present, so
 /// "missing" would be a false statement of fact by the same standard (ruled 2026-09-04).
-pub fn require_marker(dir: &Path, marker: &str) -> Result<(), PathError> {
-    if let Some(fault) = marker_name_fault(marker) {
-        return Err(PathError::MarkerNotAName {
-            marker: marker.to_string(),
-            fault,
-        });
-    }
+pub fn require_marker(dir: &Path, marker: &MarkerName) -> Result<(), PathError> {
     // A marker cannot be missing from a directory that is not there.
     if let Presence::Absent = probe_dir(dir)? {
         return Err(PathError::MissingInput(dir.to_path_buf()));
     }
-    let path = dir.join(marker);
-    match probe(&path)? {
+    let path = dir.join(marker.as_str());
+    match probe_resolved(&path)? {
         Presence::Absent => Err(PathError::MarkerMissing {
             dir: dir.to_path_buf(),
             marker: marker.to_string(),
         }),
-        Presence::Present(ft) if ft.is_symlink() => match probe_target(&path)? {
-            Presence::Present(_) => Ok(()),
-            Presence::Absent => Err(PathError::DanglingSymlink(path)),
-        },
         Presence::Present(_) => Ok(()),
-    }
-}
-
-/// Facts about a symbolic link, for a caller that wants to apply its own policy.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct SymlinkInfo {
-    /// The symlink path itself.
-    pub link: PathBuf,
-    /// The immediate (unresolved) target stored in the link — `None` if it could not be read.
-    /// Never an empty path standing in for a value that could not be obtained: an empty value
-    /// where a real one was required is how a comparison silently gets poisoned.
-    pub target: Option<PathBuf>,
-    /// The fully canonicalized target, if the link resolves — `None` when dangling or unresolvable.
-    pub resolved: Option<PathBuf>,
-    /// Whether the link resolves to an existing directory.
-    pub target_is_dir: bool,
-    /// Whether the link's target does not exist (a dangling link).
-    pub dangling: bool,
-}
-
-/// If `path` is a symbolic link, report the facts about it so the **caller** can apply its own
-/// policy — follow it (call [`ensure_destination`] normally), reject it (bail, or use
-/// [`reject_symlink`]), prompt the user, or compose a rule such as "resolve and re-apply the
-/// mount-root floor" via [`is_mount_root`] on [`SymlinkInfo::resolved`].  Returns `None` if `path`
-/// is not a symlink.  This is the "let the caller handle it" primitive: the crate reports, the
-/// caller decides.
-///
-/// `Ok(None)` means **proven** not-a-symlink (including a proven-absent path).  A path that could
-/// not be inspected is `Err(`[`PathError::Undeterminable`]`)`, never `Ok(None)`: these facts feed
-/// the caller's own guard, so answering "not a link" about a link we could not lstat would fail
-/// that guard open.  A path below a file or a dangling link is the error that names that entry.
-pub fn symlink_info(path: &Path) -> Result<Option<SymlinkInfo>, PathError> {
-    match probe(path)? {
-        Presence::Absent => Ok(None),
-        Presence::Present(ft) if !ft.is_symlink() => Ok(None),
-        Presence::Present(_) => {
-            let (target_is_dir, dangling) = match probe_target(path)? {
-                Presence::Absent => (false, true),
-                Presence::Present(target) => (target.is_dir(), false),
-            };
-            let link = without_trailing_separator(path);
-            Ok(Some(SymlinkInfo {
-                target: fs::read_link(&link).ok(),
-                resolved: link.canonicalize().ok(),
-                link,
-                target_is_dir,
-                dangling,
-            }))
-        }
     }
 }
 
 /// Refuse `path` if it is a symbolic link — the "reject" policy as a composable guard.  Call it
 /// before [`ensure_destination`] in a tool that refuses a symlinked destination.  It asks whether
 /// `path` itself is a link, not whether its ancestors are: a path under a linked directory passes,
-/// and resolves through the link.  A caller that needs more checks each ancestor with
-/// [`symlink_info`], or proves the disk with [`require_marker`].
+/// and resolves through the link.  A caller that needs more proves the disk with the marker guard
+/// ([`require_marker`]), or checks each ancestor itself, in a walk that refuses on every error but
+/// the one that proves an ancestor absent: `NotFound`, and nothing else.
 ///
 /// **Fails closed.**  A path that could not be lstat'd is refused as
 /// [`PathError::Undeterminable`], never approved: this guard exists to distrust the path it is
@@ -728,7 +716,7 @@ fn approved_levels(dir: &Path, policy: &DestPolicy) -> Result<Vec<PathBuf>, Path
     // could not be inspected propagates as Undeterminable — a check that guessed green here would
     // out-promise the live run, which is the disagreement this pair of functions exists to rule out.
     // (A symlink to a directory follows through as a directory, matching OS convention; use
-    // reject_symlink or symlink_info first if the caller wants a different policy.)
+    // reject_symlink first if the caller wants a different policy.)
     // A non-directory already sitting at the path, or above it, is a specific, early error under
     // any policy — no create mode can help, and "does not exist" would be a lie.  Handling it here
     // also means the create branches below only ever run against a genuinely-absent path.
@@ -851,15 +839,8 @@ pub fn prepare_output_file(
     // One classification of the leaf, three ways.  A leaf that could not be stat'd must not slip
     // past `Clobber::Deny`: the refusal is the guard, and skipping it silently for a file we could
     // not inspect is the guard failing open.
-    let leaf = match probe(path)? {
-        Presence::Present(ft) if ft.is_symlink() => match probe_target(path)? {
-            // A link to nothing: the write would create its target somewhere never validated.
-            Presence::Absent => return Err(PathError::DanglingSymlink(path.to_path_buf())),
-            target => target,
-        },
-        presence => presence,
-    };
-    match leaf {
+    // A link to nothing is refused: the write would create its target somewhere never validated.
+    match probe_resolved(path)? {
         // A directory in the output file's place is a specific error, distinct from clobbering a file.
         Presence::Present(ft) if ft.is_dir() => {
             return Err(PathError::NotAFile(path.to_path_buf()))
@@ -923,6 +904,7 @@ pub fn prepare_output_file(
 /// `/Volumes`, the path, or its parent cannot be stat'd for any reason but `NotFound`.  The floor
 /// gates creation, so the conservative branch is to refuse: a wrongly-refused create is a
 /// nuisance, a fabricated mount point may be a mis-targeted backup.
+#[must_use]
 pub fn is_mount_root(path: &Path) -> bool {
     // An identity probe that could not be made refuses, as an unreadable cwd does.
     !matches!(mount_root(path), Ok(false))
@@ -1011,26 +993,18 @@ fn is_mount_root_abs(path: &Path) -> bool {
             Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
         }
     }
-    let n = comps.len();
-    let at = |i: usize, v: &str| comps.get(i).map(|s| s == v).unwrap_or(false);
-
-    // macOS: /Volumes and /Volumes/<name>
-    if at(0, "Volumes") && (1..=2).contains(&n) {
-        return true;
-    }
-    // Linux: /mnt and /mnt/<name>
-    if at(0, "mnt") && (1..=2).contains(&n) {
-        return true;
-    }
-    // Linux: /media, /media/<user>, /media/<user>/<label>  (conservative — over-refusing is safe)
-    if at(0, "media") && (1..=3).contains(&n) {
-        return true;
-    }
-    // Linux: /run/media and one/two levels below
-    if at(0, "run") && at(1, "media") && (2..=4).contains(&n) {
-        return true;
-    }
-    false
+    let comps: Vec<&str> = comps.iter().map(String::as_str).collect();
+    matches!(
+        comps.as_slice(),
+        // macOS: /Volumes and /Volumes/<name>
+        ["Volumes"] | ["Volumes", _]
+        // Linux: /mnt and /mnt/<name>
+        | ["mnt"] | ["mnt", _]
+        // Linux: /media, /media/<user>, /media/<user>/<label> (conservative: over-refusing is safe)
+        | ["media"] | ["media", _] | ["media", _, _]
+        // Linux: /run/media and one/two levels below
+        | ["run", "media"] | ["run", "media", _] | ["run", "media", _, _]
+    )
 }
 
 /// Refuse if any missing level of the chain is a mount root, if the walk reaches a root that is
@@ -1094,6 +1068,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A marker name the test knows is valid.
+    fn marker_name(name: &str) -> MarkerName {
+        MarkerName::new(name).unwrap()
     }
 
     /// Restores the previous working directory on drop.
@@ -1253,7 +1232,7 @@ mod tests {
             );
             assert!(
                 matches!(
-                    require_input_dir(&spell(&dang), None),
+                    require_input_dir(&spell(&dang)),
                     Err(PathError::DanglingSymlink(_))
                 ),
                 "{suffix}"
@@ -1262,11 +1241,6 @@ mod tests {
                 matches!(reject_symlink(&spell(&ldir)), Err(PathError::IsSymlink(_))),
                 "{suffix}"
             );
-            let info = symlink_info(&spell(&ldir))
-                .unwrap()
-                .expect("a link, however spelled");
-            assert_eq!(info.link, ldir, "{suffix}");
-            assert_eq!(info.target.as_deref(), Some(real.as_path()), "{suffix}");
         }
         std::fs::remove_dir_all(&d).unwrap();
     }
@@ -1290,9 +1264,9 @@ mod tests {
         let bare = check_destination(&flink, &policy);
         assert!(matches!(bare, Err(PathError::NotADirectory(_))), "{bare:?}");
         assert_eq!(kind(check_destination(&spelled, &policy)), kind(bare));
-        let bare = require_input_dir(&flink, None);
+        let bare = require_input_dir(&flink);
         assert!(matches!(bare, Err(PathError::NotADirectory(_))), "{bare:?}");
-        assert_eq!(kind(require_input_dir(&spelled, None)), kind(bare));
+        assert_eq!(kind(require_input_dir(&spelled)), kind(bare));
         let bare = prepare_output_file(&flink, CreateMode::None, Clobber::Deny);
         assert!(matches!(bare, Err(PathError::Clobber(_))), "{bare:?}");
         assert_eq!(
@@ -1304,20 +1278,6 @@ mod tests {
             kind(bare)
         );
         require_input_path(&spelled).unwrap();
-        let (got, want) = (
-            symlink_info(&spelled)
-                .unwrap()
-                .expect("a link, however spelled"),
-            symlink_info(&flink).unwrap().unwrap(),
-        );
-        assert_eq!(got.link, want.link);
-        assert_eq!(got.target, want.target);
-        assert_eq!(got.resolved, want.resolved);
-        assert!(want.resolved.is_some());
-        assert_eq!(
-            (got.target_is_dir, got.dangling),
-            (want.target_is_dir, want.dangling)
-        );
         std::fs::remove_dir_all(&d).unwrap();
     }
 
@@ -1404,6 +1364,7 @@ mod tests {
             "/media/alice",
             "/media/alice/USBDRIVE",
             "/run/media",
+            "/run/media/alice",
             "/run/media/alice/USBDRIVE",
         ] {
             assert!(is_mount_root(Path::new(p)), "should be a mount root: {p}");
@@ -1930,7 +1891,7 @@ mod tests {
     #[test]
     fn marker_present_passes_marker_absent_fails() {
         let d = tmp("marker");
-        let policy = DestPolicy::Marked("~Bak~".to_string());
+        let policy = DestPolicy::Marked(marker_name("~Bak~"));
         assert!(matches!(
             ensure_destination(&d, &policy).unwrap_err(),
             PathError::MarkerMissing { .. }
@@ -1944,7 +1905,7 @@ mod tests {
     fn marked_policy_never_creates_a_missing_dir() {
         let d = tmp("marked_noexist");
         let dest = d.join("proj");
-        let err = ensure_destination(&dest, &DestPolicy::Marked("~Bak~".to_string())).unwrap_err();
+        let err = ensure_destination(&dest, &DestPolicy::Marked(marker_name("~Bak~"))).unwrap_err();
         assert!(matches!(err, PathError::MissingDestination(_)));
         assert!(!dest.exists(), "a marked policy must never create the dir");
         std::fs::remove_dir_all(&d).unwrap();
@@ -1954,12 +1915,12 @@ mod tests {
     fn from_flags_rejects_a_marker_with_a_creating_mode() {
         // marker + none (or the default) -> Marked
         assert_eq!(
-            DestPolicy::from_flags(CreateMode::None, Some("~Bak~".to_string())).unwrap(),
-            DestPolicy::Marked("~Bak~".to_string())
+            DestPolicy::from_flags(CreateMode::None, Some(marker_name("~Bak~"))).unwrap(),
+            DestPolicy::Marked(marker_name("~Bak~"))
         );
         // marker + final|all -> a usage error (exit 2), not a silently-dropped mode
         for mode in [CreateMode::Final, CreateMode::All] {
-            let err = DestPolicy::from_flags(mode, Some("~Bak~".to_string())).unwrap_err();
+            let err = DestPolicy::from_flags(mode, Some(marker_name("~Bak~"))).unwrap_err();
             assert_eq!(err, PolicyError::MarkerWithCreate);
             assert_eq!(err.exit_code(), crate::exit::USAGE);
         }
@@ -1986,11 +1947,27 @@ mod tests {
     }
 
     #[test]
-    fn require_input_dir_honors_the_marker() {
+    fn require_marker_refuses_what_require_input_dir_refuses_and_a_missing_marker() {
+        // `require_marker` stands in for `require_input_dir` on an input that takes a marker, so
+        // it must refuse a missing directory and a file as that does, and then the marker.
         let d = tmp("input_marker");
-        assert!(require_input_dir(&d, None).is_ok());
+        let audio = marker_name("audio");
+        let file = d.join("afile");
+        std::fs::write(&file, b"x").unwrap();
+        let kind = |r: Result<(), PathError>| r.map_err(|e| std::mem::discriminant(&e));
+        for p in [d.join("nope"), file] {
+            let got = require_input_dir(&p);
+            assert!(got.is_err(), "{}: {got:?}", p.display());
+            assert_eq!(
+                kind(require_marker(&p, &audio)),
+                kind(got),
+                "{}",
+                p.display()
+            );
+        }
+        assert!(require_input_dir(&d).is_ok());
         assert!(matches!(
-            require_input_dir(&d, Some("audio")).unwrap_err(),
+            require_marker(&d, &audio).unwrap_err(),
             PathError::MarkerMissing { .. }
         ));
         std::fs::remove_dir_all(&d).unwrap();
@@ -2021,7 +1998,7 @@ mod tests {
             return;
         }
         let f = LockedDir::new();
-        let err = require_input_dir(&f.locked.join("dest"), None).unwrap_err();
+        let err = require_input_dir(&f.locked.join("dest")).unwrap_err();
         assert_undeterminable(&err, "does not exist");
     }
 
@@ -2079,7 +2056,7 @@ mod tests {
                 .expect_err("check must not bless a destination it could not inspect");
             assert_undeterminable(&err, "does not exist");
         }
-        let err = check_destination(&dest, &DestPolicy::Marked("marker".into())).unwrap_err();
+        let err = check_destination(&dest, &DestPolicy::Marked(marker_name("marker"))).unwrap_err();
         assert_undeterminable(&err, "does not exist");
     }
 
@@ -2111,7 +2088,7 @@ mod tests {
             return;
         }
         let f = LockedDir::new();
-        let err = require_marker(&f.locked, "marker").unwrap_err();
+        let err = require_marker(&f.locked, &marker_name("marker")).unwrap_err();
         assert_undeterminable(&err, "missing");
     }
 
@@ -2136,25 +2113,6 @@ mod tests {
         // A proven-absent path still passes through: it is not a symlink, and the must-exist
         // checks own that report.
         assert!(reject_symlink(&f.tmp.path().join("nope")).is_ok());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlink_info_fails_closed_on_a_link_it_could_not_lstat() {
-        // Site 6.  These facts feed the caller's own guard, so "not a symlink" (Ok(None)) about a
-        // link we could not see fails that guard open one step upstream.
-        if skipped_as_root() {
-            return;
-        }
-        let f = LockedDir::new();
-        let err = symlink_info(&f.locked.join("link"))
-            .expect_err("an uninspectable link must not be reported as not-a-link");
-        assert!(
-            matches!(err, PathError::Undeterminable { .. }),
-            "expected Undeterminable, got {err:?}"
-        );
-        // Proven absence is still Ok(None) — that answer is earned.
-        assert!(symlink_info(&f.tmp.path().join("nope")).unwrap().is_none());
     }
 
     #[cfg(unix)]
@@ -2256,7 +2214,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(d.join("unmounted").join("x"), &link).unwrap();
         for policy in [
-            DestPolicy::Marked("m".to_string()),
+            DestPolicy::Marked(marker_name("m")),
             DestPolicy::Create(CreateMode::None),
         ] {
             let err = create_after_check(&gone, &policy).unwrap_err();
@@ -2292,7 +2250,7 @@ mod tests {
         let fx = LockedDir::new();
         let dest = fx.locked.join("dest");
         for policy in [
-            DestPolicy::Marked("m".to_string()),
+            DestPolicy::Marked(marker_name("m")),
             DestPolicy::Create(CreateMode::None),
         ] {
             assert_undeterminable(
@@ -2499,7 +2457,7 @@ mod tests {
             DestPolicy::Create(CreateMode::None),
             DestPolicy::Create(CreateMode::Final),
             DestPolicy::Create(CreateMode::All),
-            DestPolicy::Marked("~Bak~".to_string()),
+            DestPolicy::Marked(marker_name("~Bak~")),
         ] {
             assert!(
                 matches!(
@@ -2518,13 +2476,13 @@ mod tests {
         let d = tmp("inputfile");
         let missing = d.join("nope");
         assert!(matches!(
-            require_input_dir(&missing, None).unwrap_err(),
+            require_input_dir(&missing).unwrap_err(),
             PathError::MissingInput(_)
         ));
         let f = d.join("afile");
         std::fs::write(&f, b"x").unwrap();
         assert!(matches!(
-            require_input_dir(&f, None).unwrap_err(),
+            require_input_dir(&f).unwrap_err(),
             PathError::NotADirectory(_)
         ));
         std::fs::remove_dir_all(&d).unwrap();
@@ -2537,10 +2495,12 @@ mod tests {
         let deeper = below.join("y");
         let mut verdicts: Vec<(String, Result<(), PathError>)> = vec![
             ("require_input_path".into(), require_input_path(&below)),
-            ("require_input_dir".into(), require_input_dir(&below, None)),
-            ("require_marker".into(), require_marker(blocker, "m")),
+            ("require_input_dir".into(), require_input_dir(&below)),
+            (
+                "require_marker".into(),
+                require_marker(blocker, &marker_name("m")),
+            ),
             ("reject_symlink".into(), reject_symlink(&below)),
-            ("symlink_info".into(), symlink_info(&below).map(drop)),
         ];
         for mode in [CreateMode::None, CreateMode::Final, CreateMode::All] {
             for clobber in [Clobber::Allow, Clobber::Deny] {
@@ -2552,7 +2512,7 @@ mod tests {
             DestPolicy::Create(CreateMode::None),
             DestPolicy::Create(CreateMode::Final),
             DestPolicy::Create(CreateMode::All),
-            DestPolicy::Marked("m".to_string()),
+            DestPolicy::Marked(marker_name("m")),
         ] {
             for (half, run) in HALVES {
                 for path in [&below, &deeper] {
@@ -2637,7 +2597,7 @@ mod tests {
         std::fs::remove_dir_all(&d).unwrap();
     }
 
-    // --- symlinks: followed by default; the caller can inspect or reject -----------------------
+    // --- symlinks: followed by default; the caller can reject ----------------------------------
 
     #[cfg(unix)]
     #[test]
@@ -2664,7 +2624,7 @@ mod tests {
             PathError::DanglingSymlink(_)
         ));
         assert!(matches!(
-            require_input_dir(&link, None).unwrap_err(),
+            require_input_dir(&link).unwrap_err(),
             PathError::DanglingSymlink(_)
         ));
         std::fs::remove_dir_all(&d).unwrap();
@@ -2689,30 +2649,6 @@ mod tests {
         assert!(reject_symlink(&link.join("sub")).is_ok());
         std::fs::create_dir(real.join("sub")).unwrap();
         assert!(reject_symlink(&link.join("sub")).is_ok());
-        std::fs::remove_dir_all(&d).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlink_info_reports_the_facts_and_composes_the_floor() {
-        use std::os::unix::fs::symlink;
-        let d = tmp("sl_info");
-        let real = d.join("real");
-        std::fs::create_dir(&real).unwrap();
-        let link = d.join("link");
-        symlink(&real, &link).unwrap();
-
-        let info = symlink_info(&link)
-            .expect("a readable link is inspectable")
-            .expect("link should be a symlink");
-        assert!(info.target_is_dir);
-        assert!(!info.dangling);
-        // The stored target is reported as a real value, never an empty path standing in for one.
-        assert_eq!(info.target.as_deref(), Some(real.as_path()));
-        // The caller can compose "resolve and re-apply the floor" from the reported facts.
-        assert!(!is_mount_root(info.resolved.as_deref().unwrap()));
-        // A real directory is not a symlink.
-        assert!(symlink_info(&real).unwrap().is_none());
         std::fs::remove_dir_all(&d).unwrap();
     }
 
@@ -2802,13 +2738,13 @@ mod tests {
         }
 
         let d = tmp("check_marker");
-        let err = check_destination(&d, &DestPolicy::Marked("~Bak~".into())).unwrap_err();
+        let err = check_destination(&d, &DestPolicy::Marked(marker_name("~Bak~"))).unwrap_err();
         assert!(
             matches!(err, PathError::MarkerMissing { .. }),
             "expected MarkerMissing, got {err:?}"
         );
         std::fs::create_dir(d.join("~Bak~")).unwrap();
-        assert!(check_destination(&d, &DestPolicy::Marked("~Bak~".into())).is_ok());
+        assert!(check_destination(&d, &DestPolicy::Marked(marker_name("~Bak~"))).is_ok());
         std::fs::remove_dir_all(&d).unwrap();
     }
 
@@ -2820,67 +2756,104 @@ mod tests {
     const NOT_A_NAME: [&str; 9] = ["", "/tmp", "/", "a/b", "a/", "../x", "..", ".", "./x"];
 
     #[test]
-    fn from_flags_rejects_a_marker_that_is_not_a_bare_name() {
+    fn a_marker_name_refuses_every_value_that_is_not_a_name() {
         for bad in NOT_A_NAME {
-            let err = DestPolicy::from_flags(CreateMode::None, Some(bad.to_string()))
-                .expect_err(&format!("marker {bad:?} must be a usage error"));
-            assert!(
-                matches!(&err, PolicyError::MarkerNotAName { marker, .. } if marker == bad),
-                "marker {bad:?}: expected MarkerNotAName naming it, got {err:?}"
-            );
-            assert_eq!(err.exit_code(), crate::exit::USAGE, "marker {bad:?}");
+            let err = MarkerName::new(bad).expect_err(&format!("marker {bad:?} must be refused"));
+            assert_eq!(err.marker, bad, "the error names the value as given");
             let msg = err.to_string();
-            assert!(msg.contains("--require-marker"), "marker {bad:?}: {msg}");
             assert!(msg.contains(&format!("'{bad}'")), "marker {bad:?}: {msg}");
+            // It may come from a flag of any spelling, or from no flag at all.
+            assert!(!msg.contains("--require-marker"), "marker {bad:?}: {msg}");
+            // Parsing one refuses it with the same error.
+            assert_eq!(bad.parse::<MarkerName>(), Err(err), "marker {bad:?}");
         }
         // Genuine names — including ones with dots and odd punctuation — still work.
         for good in ["~Bak~", "a.b", ".marker", "spaced name"]
             .into_iter()
             .chain(cfg!(not(windows)).then_some("..."))
         {
+            let name = MarkerName::new(good).expect("a name");
+            assert_eq!((name.as_str(), name.to_string()), (good, good.to_string()));
+            assert_eq!(good.parse::<MarkerName>().as_ref(), Ok(&name));
             assert_eq!(
-                DestPolicy::from_flags(CreateMode::None, Some(good.to_string())).unwrap(),
-                DestPolicy::Marked(good.to_string()),
+                DestPolicy::from_flags(CreateMode::None, Some(name.clone())).unwrap(),
+                DestPolicy::Marked(name),
                 "marker {good:?} is a name"
             );
         }
         // A backslash is a separator on Windows alone, so "a\b" is a name everywhere else.
-        let backslash = DestPolicy::from_flags(CreateMode::None, Some("a\\b".to_string()));
+        let backslash = MarkerName::new("a\\b");
         if cfg!(windows) {
             assert!(
-                matches!(backslash, Err(PolicyError::MarkerNotAName { .. })),
+                matches!(backslash, Err(MarkerNameError { .. })),
                 "{backslash:?}"
             );
         } else {
-            assert_eq!(backslash.unwrap(), DestPolicy::Marked("a\\b".to_string()));
+            assert_eq!(backslash.unwrap().as_str(), "a\\b");
         }
     }
 
+    /// The README's flags: a mode, and a marker typed as a name.
+    #[cfg(feature = "clap")]
+    #[derive(clap::Parser, Debug)]
+    struct FlagArgs {
+        #[arg(long, value_enum, default_value_t)]
+        create_destination: CreateMode,
+        #[arg(long)]
+        require_marker: Option<MarkerName>,
+    }
+
+    #[cfg(feature = "clap")]
     #[test]
-    fn from_flags_reports_the_name_fault_before_the_create_contradiction() {
+    fn a_clap_flag_typed_as_a_marker_name_refuses_a_non_name_as_a_usage_error() {
+        use clap::Parser;
+        let err = FlagArgs::try_parse_from(["tool", "--require-marker", "a/b"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        assert_eq!(err.exit_code(), i32::from(crate::exit::USAGE));
+        let source = std::error::Error::source(&err).and_then(|e| e.downcast_ref());
+        assert!(
+            matches!(source, Some(MarkerNameError { fault, .. }) if *fault == "contains a path separator"),
+            "{err:?}"
+        );
+        let args = FlagArgs::try_parse_from(["tool", "--require-marker", "~Bak~"]).unwrap();
+        assert_eq!(args.require_marker, Some(marker_name("~Bak~")));
+        assert_eq!(
+            DestPolicy::from_flags(args.create_destination, args.require_marker),
+            Ok(DestPolicy::Marked(marker_name("~Bak~")))
+        );
+    }
+
+    #[cfg(feature = "clap")]
+    #[test]
+    fn a_clap_tool_reports_the_name_fault_before_the_create_contradiction() {
         // A non-name marker with a creating mode has two faults; the value fault is named,
-        // because fixing the mode would only reveal it a run later.
-        for mode in [CreateMode::Final, CreateMode::All] {
-            let err = DestPolicy::from_flags(mode, Some("/tmp".to_string())).unwrap_err();
+        // because fixing the mode would only reveal it a run later.  The name is checked when the
+        // `MarkerName` is made, so clap reports it, and `from_flags` never sees the pair.
+        use clap::Parser;
+        for mode in ["final", "all"] {
+            let argv = [
+                "tool",
+                "--create-destination",
+                mode,
+                "--require-marker",
+                "/tmp",
+            ];
+            let err = FlagArgs::try_parse_from(argv).unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "{err}");
+            let source = std::error::Error::source(&err).and_then(|e| e.downcast_ref());
             assert!(
-                matches!(err, PolicyError::MarkerNotAName { .. }),
-                "got {err:?}"
+                matches!(source, Some(MarkerNameError { fault, .. }) if *fault == "is absolute"),
+                "{mode}: {err:?}"
             );
         }
     }
 
     #[test]
-    fn require_marker_refuses_a_non_name_instead_of_probing_elsewhere() {
-        let d = tmp("marker_not_a_name");
-        // Make every escape route *succeed* if it were probed, so a pass can only come from the
-        // guard being bypassed, never from a genuinely-missing path.
-        std::fs::write(d.join("x"), b"").unwrap();
-        let parent = d.parent().unwrap().to_path_buf();
-        let sibling = parent.join(format!("cli_contract_sibling_{}", std::process::id()));
-        std::fs::write(&sibling, b"").unwrap();
-        let sibling_name = sibling.file_name().unwrap().to_str().unwrap().to_string();
+    fn a_marker_name_names_the_fault_of_each_shape() {
+        // Each of these, joined to a directory, names some other path that exists, so a guard
+        // that probed it would pass.  No marker name can hold one, so none reaches a probe.
         let cases = [
-            // dir.join("") == dir, which exists
+            // dir.join("") == dir
             ("".to_string(), "is empty"),
             // the root exists everywhere
             ("/".to_string(), "is absolute"),
@@ -2889,22 +2862,21 @@ mod tests {
                 std::env::temp_dir().to_str().unwrap().to_string(),
                 "is absolute",
             ),
-            // escapes to an existing sibling
-            (format!("../{sibling_name}"), "contains a path separator"),
-            // descends to an existing entry
+            // escapes to a sibling
+            ("../x".to_string(), "contains a path separator"),
+            // descends to an entry
             ("./x".to_string(), "contains a path separator"),
-            // trailing separator on an existing entry
+            // trailing separator on an entry
             ("x/".to_string(), "contains a path separator"),
         ];
         for (bad, expected_fault) in &cases {
-            let err = require_marker(&d, bad)
-                .expect_err(&format!("marker {bad:?} must not pass the guard"));
-            assert!(
-                matches!(&err, PathError::MarkerNotAName { marker, fault }
-                    if marker == bad && fault == expected_fault),
-                "marker {bad:?}: expected MarkerNotAName with fault {expected_fault:?}, got {err:?}"
+            let err = MarkerName::new(bad.as_str())
+                .expect_err(&format!("marker {bad:?} must be refused"));
+            assert_eq!(
+                (err.marker.as_str(), err.fault),
+                (bad.as_str(), *expected_fault),
+                "marker {bad:?}"
             );
-            assert_eq!(err.exit_code(), crate::exit::TOOL_ERROR);
             let msg = err.to_string();
             assert!(msg.contains(&format!("'{bad}'")), "{msg}");
             assert!(
@@ -2913,44 +2885,19 @@ mod tests {
             );
             assert!(msg.contains("never a path"), "{msg}");
         }
-        // The plain name it descended to is still a valid marker.
-        assert!(require_marker(&d, "x").is_ok());
-        std::fs::remove_file(&sibling).unwrap();
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
-    fn every_marker_entry_point_refuses_a_non_name() {
-        // The policy path (live and dry-run) and the input-dir path all reach the guard; each
-        // must refuse a non-name even though the directory itself is fine.
-        let d = tmp("marker_entry_points");
-        let policy = DestPolicy::Marked("/".to_string());
-        assert!(matches!(
-            ensure_destination(&d, &policy).unwrap_err(),
-            PathError::MarkerNotAName { .. }
-        ));
-        assert!(matches!(
-            check_destination(&d, &policy).unwrap_err(),
-            PathError::MarkerNotAName { .. }
-        ));
-        assert!(matches!(
-            require_input_dir(&d, Some("")).unwrap_err(),
-            PathError::MarkerNotAName { .. }
-        ));
-        std::fs::remove_dir_all(&d).unwrap();
-    }
-
-    #[test]
-    fn marker_not_a_name_message_says_what_a_marker_is() {
-        let err = DestPolicy::from_flags(CreateMode::None, Some("a/b".to_string())).unwrap_err();
+    fn a_marker_name_error_says_what_a_marker_is() {
+        let err = MarkerName::new("a/b").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("contains a path separator"), "{msg}");
         assert!(msg.contains("single file or directory name"), "{msg}");
-        let err = DestPolicy::from_flags(CreateMode::None, Some(String::new())).unwrap_err();
+        let err = MarkerName::new("").unwrap_err();
         assert!(err.to_string().contains("is empty"), "{err}");
-        let err = DestPolicy::from_flags(CreateMode::None, Some("/tmp".to_string())).unwrap_err();
+        let err = MarkerName::new("/tmp").unwrap_err();
         assert!(err.to_string().contains("is absolute"), "{err}");
-        let err = DestPolicy::from_flags(CreateMode::None, Some("..".to_string())).unwrap_err();
+        let err = MarkerName::new("..").unwrap_err();
         assert!(err.to_string().contains("is '..'"), "{err}");
     }
 
@@ -3106,10 +3053,9 @@ mod tests {
         // The last arm of marker_name_fault: a bare drive and a drive-relative path are neither
         // absolute nor separated, yet neither is one normal component.
         for bad in ["C:", "C:x"] {
-            let err = DestPolicy::from_flags(CreateMode::None, Some(bad.to_string())).unwrap_err();
-            assert!(
-                matches!(&err, PolicyError::MarkerNotAName { fault, .. }
-                    if *fault == "is not a single path component"),
+            let err = MarkerName::new(bad).unwrap_err();
+            assert_eq!(
+                err.fault, "is not a single path component",
                 "marker {bad:?}: {err:?}"
             );
         }
@@ -3126,7 +3072,7 @@ mod tests {
         let d = tmp("marker_dangling");
         let link = d.join("m");
         std::os::unix::fs::symlink(d.join("gone"), &link).unwrap();
-        let err = require_marker(&d, "m").unwrap_err();
+        let err = require_marker(&d, &marker_name("m")).unwrap_err();
         assert!(
             matches!(&err, PathError::DanglingSymlink(p) if p == &link),
             "expected DanglingSymlink({}), got {err:?}",
@@ -3134,18 +3080,14 @@ mod tests {
         );
         assert!(err.to_string().contains("broken symbolic link"), "{err}");
         assert!(!err.to_string().contains("missing"), "{err}");
-        // The policy entry points agree, live and dry-run, and so does the input-dir guard.
-        let policy = DestPolicy::Marked("m".to_string());
+        // The policy entry points agree, live and dry-run.
+        let policy = DestPolicy::Marked(marker_name("m"));
         assert!(matches!(
             ensure_destination(&d, &policy).unwrap_err(),
             PathError::DanglingSymlink(_)
         ));
         assert!(matches!(
             check_destination(&d, &policy).unwrap_err(),
-            PathError::DanglingSymlink(_)
-        ));
-        assert!(matches!(
-            require_input_dir(&d, Some("m")).unwrap_err(),
             PathError::DanglingSymlink(_)
         ));
         std::fs::remove_dir_all(&d).unwrap();
@@ -3158,11 +3100,11 @@ mod tests {
         let d = tmp("marker_link_ok");
         std::fs::write(d.join("real"), b"").unwrap();
         std::os::unix::fs::symlink(d.join("real"), d.join("m")).unwrap();
-        assert!(require_marker(&d, "m").is_ok());
+        assert!(require_marker(&d, &marker_name("m")).is_ok());
         // ...and a link to a directory outside `dir` still counts: the entry is inside.
         let outside = tmp("marker_link_outside");
         std::os::unix::fs::symlink(&outside, d.join("out")).unwrap();
-        assert!(require_marker(&d, "out").is_ok());
+        assert!(require_marker(&d, &marker_name("out")).is_ok());
         std::fs::remove_dir_all(&d).unwrap();
         std::fs::remove_dir_all(&outside).unwrap();
     }
@@ -3175,7 +3117,7 @@ mod tests {
         let d = tmp("marker_loop");
         let link = d.join("m");
         std::os::unix::fs::symlink(&link, &link).unwrap();
-        let err = require_marker(&d, "m").unwrap_err();
+        let err = require_marker(&d, &marker_name("m")).unwrap_err();
         assert!(
             matches!(err, PathError::Undeterminable { .. }),
             "expected Undeterminable, got {err:?}"
@@ -3197,7 +3139,7 @@ mod tests {
         let f = LockedDir::new();
         let d = tmp("marker_link_eacces");
         std::os::unix::fs::symlink(f.locked.join("real.txt"), d.join("m")).unwrap();
-        let err = require_marker(&d, "m").unwrap_err();
+        let err = require_marker(&d, &marker_name("m")).unwrap_err();
         assert_undeterminable(&err, "missing");
         assert_undeterminable(&err, "broken");
         std::fs::remove_dir_all(&d).unwrap();
@@ -3207,7 +3149,7 @@ mod tests {
     fn require_marker_still_says_missing_when_nothing_is_there() {
         let d = tmp("marker_absent");
         assert!(matches!(
-            require_marker(&d, "m").unwrap_err(),
+            require_marker(&d, &marker_name("m")).unwrap_err(),
             PathError::MarkerMissing { .. }
         ));
         std::fs::remove_dir_all(&d).unwrap();
@@ -3218,29 +3160,21 @@ mod tests {
     fn a_marker_of_only_dots_and_spaces_is_not_a_name() {
         // Windows strips trailing dots and spaces, so each of these names the directory itself,
         // and the guard would pass in an empty one.  Elsewhere `...` is an ordinary name.
-        let d = tmp("marker_dots");
         for v in ["...", "....", " ", ". ", ". .", ".. ", "... "] {
+            let got = MarkerName::new(v);
             assert!(
-                matches!(
-                    DestPolicy::from_flags(CreateMode::None, Some(v.to_string())),
-                    Err(PolicyError::MarkerNotAName { .. })
-                ),
-                "from_flags {v:?}"
+                matches!(&got, Err(MarkerNameError { .. })),
+                "MarkerName::new {v:?}: {got:?}"
             );
-            let got = require_marker(&d, v);
-            assert!(
-                matches!(&got, Err(PathError::MarkerNotAName { .. })),
-                "require_marker {v:?}: {got:?}"
-            );
+            assert_eq!(v.parse::<MarkerName>(), got, "parsing {v:?}");
         }
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
     fn require_marker_on_a_missing_directory_says_the_directory_is_missing() {
         let d = tmp("marker_no_dir");
         let gone = d.join("gone");
-        let got = require_marker(&gone, "m");
+        let got = require_marker(&gone, &marker_name("m"));
         assert!(
             matches!(&got, Err(PathError::MissingInput(p)) if *p == gone),
             "{got:?}"

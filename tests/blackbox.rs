@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 
 use cli_contract::{
     check_destination, ensure_destination, exit, prepare_output_file, reject_symlink,
-    require_input_dir, require_input_path, symlink_info, Clobber, CreateMode, DestPolicy,
-    PathError,
+    require_input_dir, require_input_path, Clobber, CreateMode, DestPolicy, PathError,
 };
 // Used only by the floor tests, which do not run on Windows.
 #[cfg(not(windows))]
@@ -363,12 +362,8 @@ fn an_unknowable_absent_entry_is_undeterminable_and_never_created() {
     let halves: [(&str, Half); 2] = [("check", check_destination), ("ensure", ensure_destination)];
     let mut verdicts = vec![
         ("require_input_path".to_string(), require_input_path(&nope)),
-        (
-            "require_input_dir".to_string(),
-            require_input_dir(&nope, None),
-        ),
+        ("require_input_dir".to_string(), require_input_dir(&nope)),
         ("reject_symlink".to_string(), reject_symlink(&nope)),
-        ("symlink_info".to_string(), symlink_info(&nope).map(drop)),
     ];
     for mode in MODES {
         for (half, run) in halves {
@@ -419,7 +414,7 @@ fn dot_dotdot_and_root_name_the_directories_they_mean() {
         let p = Path::new(p);
         for (what, r) in [
             ("require_input_path", require_input_path(p)),
-            ("require_input_dir", require_input_dir(p, None)),
+            ("require_input_dir", require_input_dir(p)),
             ("reject_symlink", reject_symlink(p)),
             (
                 "check None",
@@ -433,10 +428,6 @@ fn dot_dotdot_and_root_name_the_directories_they_mean() {
             if r.is_err() {
                 wrong.push(format!("{what}({}): {r:?}", p.display()));
             }
-        }
-        match symlink_info(p) {
-            Ok(None) => {}
-            other => wrong.push(format!("symlink_info({}): {other:?}", p.display())),
         }
         let r = prepare_output_file(p, CreateMode::None, Clobber::Allow);
         if !matches!(r, Err(PathError::NotAFile(_))) {
@@ -457,7 +448,7 @@ fn a_plain_file_spelled_with_a_separator_is_checked_as_the_file() {
         s.push(suffix);
         let spelled = PathBuf::from(s);
         assert!(require_input_path(&spelled).is_ok(), "{suffix}");
-        let r = require_input_dir(&spelled, None);
+        let r = require_input_dir(&spelled);
         assert!(
             matches!(r, Err(PathError::NotADirectory(_))),
             "{suffix}: {r:?}"
@@ -487,16 +478,13 @@ fn a_bare_dangling_link_is_dangling_everywhere_and_nothing_is_created() {
     let mut wrong = Vec::new();
     let mut verdicts = vec![
         ("require_input_path".to_string(), require_input_path(&dang)),
-        (
-            "require_input_dir".to_string(),
-            require_input_dir(&dang, None),
-        ),
+        ("require_input_dir".to_string(), require_input_dir(&dang)),
     ];
     for policy in [
         DestPolicy::Create(CreateMode::None),
         DestPolicy::Create(CreateMode::Final),
         DestPolicy::Create(CreateMode::All),
-        DestPolicy::Marked("m".into()),
+        DestPolicy::Marked("m".parse().unwrap()),
     ] {
         verdicts.push((
             format!("check {policy:?}"),
@@ -513,59 +501,25 @@ fn a_bare_dangling_link_is_dangling_everywhere_and_nothing_is_created() {
         }
     }
     assert!(absent(&ghost), "the dangling link's target was created");
-    // symlink_info: the facts of a dangling link.
-    let info = symlink_info(&dang).unwrap().expect("a link");
-    assert_eq!(info.link, dang);
-    assert_eq!(info.target.as_deref(), Some(ghost.as_path()));
-    assert!(
-        info.dangling && !info.target_is_dir && info.resolved.is_none(),
-        "{info:?}"
-    );
     // reject_symlink: "refuses a destination that is itself a link (`IsSymlink`)".
     let r = reject_symlink(&dang);
     assert!(matches!(r, Err(PathError::IsSymlink(_))), "{r:?}");
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// README: "`link/sub` passes when `link` leads to a directory".  rustdoc of `SymlinkInfo`:
-/// `resolved` is "The fully canonicalized target"; `target` is "The immediate (unresolved)
-/// target".  And the composition: "`is_mount_root(resolved)` ... catches a link that resolves
-/// onto a mount root".
+/// README: "`link/sub` passes when `link` leads to a directory".
 #[cfg(unix)]
 #[test]
-fn symlink_facts_and_the_reject_policy_below_a_link() {
+fn the_reject_policy_below_a_link() {
     let d = tempfile::tempdir().unwrap();
     let real = d.path().join("real");
     std::fs::create_dir(&real).unwrap();
     let ldir = d.path().join("ldir");
     std::os::unix::fs::symlink(&real, &ldir).unwrap();
-    let chain = d.path().join("chain");
-    std::os::unix::fs::symlink(&ldir, &chain).unwrap();
 
     reject_symlink(&ldir.join("sub")).expect("an absent path below a linked dir passes");
     std::fs::create_dir(real.join("sub")).unwrap();
     reject_symlink(&ldir.join("sub")).expect("a real dir below a linked dir passes");
-
-    let info = symlink_info(&chain).unwrap().expect("a link");
-    assert_eq!(
-        info.target.as_deref(),
-        Some(ldir.as_path()),
-        "immediate target"
-    );
-    assert_eq!(
-        info.resolved,
-        Some(real.canonicalize().unwrap()),
-        "canonical target"
-    );
-    assert!(info.target_is_dir && !info.dangling);
-
-    #[cfg(target_os = "macos")]
-    {
-        let to_volumes = d.path().join("to_volumes");
-        std::os::unix::fs::symlink("/Volumes", &to_volumes).unwrap();
-        let info = symlink_info(&to_volumes).unwrap().expect("a link");
-        assert!(is_mount_root(info.resolved.as_deref().unwrap()), "{info:?}");
-    }
 }
 
 // --- errors --------------------------------------------------------------------------------
@@ -676,7 +630,7 @@ fn an_empty_path_is_never_approved() {
     let mut wrong = Vec::new();
     for (what, r) in [
         ("require_input_path", require_input_path(p)),
-        ("require_input_dir", require_input_dir(p, None)),
+        ("require_input_dir", require_input_dir(p)),
     ] {
         if r.is_ok() {
             wrong.push(format!("{what}: Ok"));
@@ -701,9 +655,9 @@ fn an_empty_path_is_never_approved() {
 // --- the runnable examples ------------------------------------------------------------------
 //
 // README: "Runnable versions of the snippets above are in `examples/`", and of a marker that is
-// not a name: "validate at the flag boundary to get the usage code".  The house exit-code table:
-// a value wrong on its face, decidable from the argument text alone, is exit 2, whatever the disk
-// holds.  The `inputs` example takes its marker from argv.
+// not a name: "For a flag typed `Option<MarkerName>`, clap reports a bad value as a **usage error
+// (exit 2)**".  The house exit-code table: a value wrong on its face, decidable from the argument
+// text alone, is exit 2, whatever the disk holds.  The `inputs` example takes its marker from argv.
 
 /// Builds an example from the current source and returns its path.  It builds in a target
 /// directory of its own, because a run that names its targets (`cargo test --test blackbox`) does
@@ -764,6 +718,6 @@ fn the_inputs_example_exits_2_for_a_marker_on_argv_that_is_not_a_name() {
     assert!(
         wrong.is_empty(),
         "a marker on argv that is not a name is a usage error (exit 2), but the inputs example \
-         passes it unvalidated to require_input_dir: {wrong:#?}"
+         passes it unvalidated to require_marker: {wrong:#?}"
     );
 }
