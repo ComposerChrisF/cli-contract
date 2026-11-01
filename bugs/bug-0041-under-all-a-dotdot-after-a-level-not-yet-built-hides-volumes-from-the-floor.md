@@ -12,7 +12,7 @@ check_destination(to_usr/zz/../../Volumes/cli_contract_bb, All): Ok(())
 check_output_file(to_usr/zz/../../Volumes/cli_contract_bb, All, Allow): Ok(())
 ```
 
-Once `zz` exists, the second and third paths are `/Volumes/cli_contract_bb`: the OS resolves `to_usr` to `/usr`, `zz/..` back to `/usr`, and the second `..` to `/`.  The first path, with no missing level before its `..`, is refused as it should be.  The live run builds `to_usr/zz`, then `/Volumes/cli_contract_bb`: a mount point, as a directory or, for the output file, as a file.  Without root the `/Volumes` create fails for permissions, but through a link to a writable directory the levels before it are built first.
+Once `zz` exists, the second and third paths are `/Volumes/cli_contract_bb`: the OS resolves `to_usr` to `/usr`, `zz/..` back to `/usr`, and the second `..` to `/`.  The first path, with no missing level before its `..`, is refused as it should be.  Through a link to a directory root can write in, such as `/opt`, the live run builds the missing level, then `/Volumes/cli_contract_bb`: a mount point, as a directory or, for the output file, as a file.  (Through `/usr` itself it stops at `to_usr/zz`, even as root, since `/usr` is on macOS’s sealed system volume; corrected 31-Oct-2026 from review.)  Without root the `/Volumes` create fails for permissions, but through a link to a writable directory the levels before it are built first.
 
 ## The promise it breaks
 
