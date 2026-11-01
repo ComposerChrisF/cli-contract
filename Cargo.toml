@@ -1,6 +1,6 @@
 [package]
 name = "cli-contract"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 # The tarball is an allowlist, so a new file is not shipped unless named here;
 # CI's package job checks the list.

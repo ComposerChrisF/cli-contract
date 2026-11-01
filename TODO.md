@@ -10,9 +10,8 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   the page with the clap impls visible, and the `.crate`’s normalized `Cargo.toml` says
   `default = []`.
 
-- [ ] **Fix [bug-0040](bugs/bug-0040-an-output-path-through-dotdot-has-its-parent-build-the-file-as-a-directory.md)
-  as 0.6.1**: under `All`, `a/../a` with `a` absent is approved, and building the parent creates
-  `a` as a directory.  Listed under Known limitations until then.
+- [ ] **Publish 0.6.1**, which fixes bug-0040 and bug-0041: under `All`, a `..` after a directory
+  that does not exist yet is refused.  It waits on the maintainer.
 
 - [ ] **Set the semver baseline**, so every later release is checked against 0.6.0.  Nothing
   checks it yet: no CI job, and `cargo-semver-checks` is not installed here.

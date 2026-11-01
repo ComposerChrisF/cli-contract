@@ -198,6 +198,30 @@ fn the_floor_sees_volumes_through_a_link_then_dotdot() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// bug-0041.  README: the identity check "still sees the directory the OS will create in", and "So
+/// under `All` a `..` after a level that does not exist yet is refused, as
+/// `PathError::DotDotAfterMissing`".  With `zz` absent, `L/zz/../../Volumes/X` cannot be stat'd,
+/// yet once `L/zz` is built it is `/Volumes/X`.  Only checks run here: a create would try
+/// `/usr/zz`.
+#[cfg(target_os = "macos")]
+#[test]
+fn all_refuses_a_dotdot_after_a_missing_level_that_hides_volumes() {
+    let d = tempfile::tempdir().unwrap();
+    let to_usr = d.path().join("to_usr");
+    std::os::unix::fs::symlink("/usr", &to_usr).unwrap();
+    let dest = to_usr
+        .join("cli_contract_bb_absent")
+        .join("..")
+        .join("..")
+        .join("Volumes")
+        .join("cli_contract_bb");
+    let dir = check_destination(&dest, &DestPolicy::Create(CreateMode::All));
+    let file = check_output_file(&dest, CreateMode::All, Clobber::Allow);
+    for r in [&dir, &file] {
+        assert!(matches!(r, Err(PathError::DotDotAfterMissing(_))), "{r:?}");
+    }
+}
+
 /// README: "a bare `Backup` with a cwd of `/Volumes` is refused" — the same resolution from `/`
 /// and from a sibling of the mount root.
 #[cfg(not(windows))]

@@ -4,6 +4,16 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.1] - 2026-10-31
+
+### Fixed
+
+- **Under `All`, a `..` after a directory that does not exist yet is refused**, as the new `PathError::DotDotAfterMissing`, by `check_destination`, `ensure_destination`, `check_output_file`, and `prepare_output_file` alike.  In every mode, so is an output file whose own path ends in such a `..`.  Until that directory is built, the OS has not resolved where the `..` leads, so the checks were judging a path that did not exist yet:
+  - On macOS, with `L` a link to `/opt`, `L/zz/../../Volumes/X` was approved.  Once `zz` is built it is `/Volumes/X`, so run as root the create made a mount point (bug-0041).
+  - The output file `a/../a`, with `a` absent, was approved under `All`, and `x/a/..`, with `x/a` absent, under `Final` and `All`.  Once the parent was built, the path named a directory, so the write failed (bug-0040).
+
+  A destination such as `new/../new`, which was built before, is refused too: spell it without the `..`.  On Windows `..` is resolved before the file system sees it, so the refusal meets only a verbatim (`\\?\`) path, where `..` is a literal name that no create can make.
+
 ## [0.6.0] - 2026-10-31
 
 The first public release.
@@ -35,4 +45,5 @@ The first public release.
 
 These affect only users of the unpublished versions before 0.6.0.
 
+[0.6.1]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.1
 [0.6.0]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.0

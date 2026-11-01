@@ -365,6 +365,12 @@ pub enum PathError {
     },
     /// Creating this path would materialize a mount point — never allowed, at any create mode.
     MountRoot(PathBuf),
+    /// A `..` after a directory that does not exist yet: a level of the chain [`CreateMode::All`]
+    /// would create, or, in every mode, the last component of an output file's path.  Where it
+    /// leads is known only once that directory is built, and then from wherever the directory
+    /// really is, so neither the floor nor an output file's own check can be made first.  Names
+    /// the path ending in that `..`: the level, absolute, or the output file as given.
+    DotDotAfterMissing(PathBuf),
     /// A required marker file/dir is not present inside the directory.
     MarkerMissing {
         /// The directory searched.
@@ -445,6 +451,12 @@ impl fmt::Display for PathError {
             PathError::MountRoot(p) => write!(
                 f,
                 "refusing to create a mount point: {} (is the volume mounted?)",
+                p.display()
+            ),
+            PathError::DotDotAfterMissing(p) => write!(
+                f,
+                "refusing '..' after a directory that does not exist yet, since where it leads \
+                 cannot be checked before the create: {}",
                 p.display()
             ),
             PathError::MarkerMissing { dir, marker } => write!(
@@ -803,10 +815,9 @@ fn create_levels(dir: &Path, levels: &[PathBuf]) -> Result<(), PathError> {
         let level = without_trailing_separator(level);
         match fs::create_dir(&level) {
             Ok(()) => {}
-            // Made since the walk saw it absent, or a `..` level.  A directory there is built on,
-            // following a link to one as the walk follows one; the floor is not checked again
-            // below it (a racing writer is out of reach without `mkdirat`).  Anything else is
-            // named as what it is.
+            // Made since the walk saw it absent.  A directory there is built on, following a link
+            // to one as the walk follows one; the floor is not checked again below it (a racing
+            // writer is out of reach without `mkdirat`).  Anything else is named as what it is.
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Presence::Absent = probe_dir(&level)? {
                     return Err(PathError::Io {
@@ -896,6 +907,11 @@ fn check_output_leaf(path: &Path, clobber: Clobber) -> Result<(), PathError> {
         }
         // The write would create the mount point, as a file.
         Presence::Absent if mount_root(path)? => Err(PathError::MountRoot(path.to_path_buf())),
+        // An absent leaf ending in `..` follows a directory not there yet, its own parent: once
+        // that is built, the path names a directory, never a file (bug-0040).
+        Presence::Absent if matches!(path.components().next_back(), Some(Component::ParentDir)) => {
+            Err(PathError::DotDotAfterMissing(path.to_path_buf()))
+        }
         Presence::Present(_) | Presence::Absent => Ok(()),
     }
 }
@@ -1054,10 +1070,10 @@ fn is_mount_root_abs(path: &Path) -> bool {
     )
 }
 
-/// Refuse if any missing level of the chain is a mount root, if the walk reaches a root that is
-/// absent (on Windows, a drive or share that is not there), or if the existing ancestor the chain
-/// would be built on is not a directory.  Otherwise return the missing levels, absolute, from the
-/// one just below that base down to `path`: all that `All`'s create may build.
+/// Refuse if any missing level of the chain is a mount root or a `..`, if the walk reaches a root
+/// that is absent (on Windows, a drive or share that is not there), or if the existing ancestor the
+/// chain would be built on is not a directory.  Otherwise return the missing levels, absolute, from
+/// the one just below that base down to `path`: all that `All`'s create may build.
 fn floor_check_chain(path: &Path) -> Result<Vec<PathBuf>, PathError> {
     // Absolutize ONCE, here, and walk the absolute path.  Two reasons, both load-bearing:
     //
@@ -1098,6 +1114,16 @@ fn floor_check_chain(path: &Path) -> Result<Vec<PathBuf>, PathError> {
         if is_mount_root_abs(p) || is_volumes_or_a_child_of_it(p)? {
             return Err(PathError::MountRoot(p.to_path_buf()));
         }
+    }
+    // Every level here is absent, so a `..` among them follows one not yet built, and it and
+    // everything after it resolve only once that level exists: the probes above saw `NotFound`
+    // where the create would find, say, `/Volumes` (bug-0040, bug-0041).  So the first such level
+    // the create would meet is refused, after the floor, so that a mount root is still named as
+    // one.  On Windows `absolute` resolves `..` as the file system does, except in a verbatim
+    // (`\\?\`) path, where `..` is a literal name that no create can make.
+    let dotdot = |p: &&Path| matches!(p.components().next_back(), Some(Component::ParentDir));
+    if let Some(p) = to_create.iter().rev().copied().find(dotdot) {
+        return Err(PathError::DotDotAfterMissing(p.to_path_buf()));
     }
     Ok(to_create.into_iter().rev().map(Path::to_path_buf).collect())
 }
@@ -2416,15 +2442,47 @@ mod tests {
         std::fs::remove_dir_all(&d).unwrap();
     }
 
+    #[cfg(windows)] // `absolute` resolves `..` there, so the chain has no `..` level to refuse
     #[test]
-    fn all_builds_a_chain_through_a_dotdot_level() {
-        // On Unix the walk keeps `..`, so a level such as `a/..` names a directory that exists and
-        // its `create_dir` answers EEXIST; `create_dir_all` took that in its stride, and so must
-        // the level-by-level create.
+    fn all_builds_a_chain_through_a_dotdot_on_windows() {
         let d = tmp("all_dotdot");
         let all = DestPolicy::Create(CreateMode::All);
         ensure_destination(&d.join("a").join("..").join("b"), &all).unwrap();
         assert!(d.join("b").is_dir());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[cfg(not(windows))] // `absolute` keeps `..` here, as the OS resolves it: through the levels
+    #[test]
+    fn all_refuses_a_dotdot_after_a_level_it_would_build() {
+        // bug-0040: building `a/..`, the parent of the file `a/../a`, makes `a` a directory where
+        // the file goes, and building `a`, the parent of the file `a/..`, makes that path name
+        // `d`.  bug-0041 is the same `..` hiding `/Volumes` from the floor (see tests/blackbox.rs).
+        // Every caller is refused, by the same path, and nothing is built.
+        let d = tmp("all_dotdot");
+        let all = DestPolicy::Create(CreateMode::All);
+        let level = d.join("a").join("..");
+        let dir = level.join("b");
+        let file = level.join("a");
+        let refused = |r: Result<(), PathError>| {
+            assert!(
+                matches!(&r, Err(PathError::DotDotAfterMissing(p)) if p == &level),
+                "{r:?}"
+            );
+        };
+        refused(check_destination(&dir, &all));
+        refused(ensure_destination(&dir, &all));
+        refused(check_output_file(&file, CreateMode::All, Clobber::Allow));
+        refused(prepare_output_file(&file, CreateMode::All, Clobber::Allow));
+        for mode in [CreateMode::Final, CreateMode::All] {
+            refused(check_output_file(&level, mode, Clobber::Allow));
+            refused(prepare_output_file(&level, mode, Clobber::Allow));
+        }
+        assert_eq!(
+            std::fs::read_dir(&d).unwrap().count(),
+            0,
+            "something was built"
+        );
         std::fs::remove_dir_all(&d).unwrap();
     }
 

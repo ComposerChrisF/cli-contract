@@ -144,8 +144,11 @@ directory, while a bare `Backup` with a cwd of `/Volumes` is refused.)  Resoluti
 touches no filesystem and does not resolve symlinks, so the list is matched against the literal
 path, including `..`, which after a symbolic link the OS resolves from the link’s target instead;
 only the identity check for `/Volumes` looks through a link, and it still sees the directory the
-OS will create in.  If the current directory cannot be read at all, or the identity
-check’s stat of `/Volumes`, the path, or its parent fails for any reason but absence, the floor
+OS will create in.  So under `All` a `..` after a level that does not exist yet is refused, as
+`PathError::DotDotAfterMissing`, and in every mode so is an output file whose own path ends in
+such a `..`: until that level is built, the OS has not resolved where the `..` leads, and nothing
+there can be checked.  If the current directory cannot be read at all, or the identity check’s
+stat of `/Volumes`, the path, or its parent fails for any reason but absence, the floor
 **fails closed** and refuses — it gates creation, so an unprovable path is never granted the
 dangerous branch.
 
@@ -313,9 +316,6 @@ weighing the crate finds them in one place.
 - **An output file path that ends in a separator is approved.**  `out.pdf/` and `out.pdf/.` are
   checked as `out.pdf`, so `check_output_file` and `prepare_output_file` approve them, though no
   file can be written under that spelling; the write then fails.
-- **An output file path through `..` can be built over by its own parent.**  For `a/../a` with `a`
-  absent, under `All`, building the parent `a/..` creates `a` as a directory where the file
-  goes.  Both halves approve the path, and the write then fails.
 - **On Windows:** there is no `SIGPIPE`, so `reset_sigpipe` does nothing; a volume mounted into an
   empty NTFS folder is not detected; and the tests do not stage symbolic links, permissions, or a
   closed pipe there.

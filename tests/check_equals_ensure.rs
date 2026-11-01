@@ -492,16 +492,8 @@ fn check_and_prepare_agree_on_every_output_file_shape_mode_clobber_and_spelling(
                                 fs::metadata(&parent).map(|m| m.is_dir()).unwrap_or(false),
                                 "prepare returned Ok without the file's parent there: {case}"
                             );
-                            // Not for `a/../a`: building its parent, `a/..`, builds `a`, the
-                            // file's own path, as a directory.  Both halves approved it, so they
-                            // agree; that the approved file cannot then be written is a defect of
-                            // the pair (bug-0040), not a disagreement between them.
-                            let recheck = check_output_file(&file, mode, clobber);
-                            let parent_built_the_file = *depth == 1
-                                && matches!(spelling, Spelling::RelativeThroughDotDot)
-                                && matches!(&recheck, Err(PathError::NotAFile(p)) if p == &file);
                             assert!(
-                                parent_built_the_file || recheck.is_ok(),
+                                check_output_file(&file, mode, clobber).is_ok(),
                                 "check refused what prepare had just approved and built: {case}"
                             );
                         }
