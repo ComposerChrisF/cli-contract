@@ -310,6 +310,12 @@ weighing the crate finds them in one place.
   fails closed.
 - **A name the filesystem refuses can separate the dry run from the live run**, since the check
   below a missing level sees only `NotFound`.
+- **An output file path that ends in a separator is approved.**  `out.pdf/` and `out.pdf/.` are
+  checked as `out.pdf`, so `check_output_file` and `prepare_output_file` approve them, though no
+  file can be written under that spelling; the write then fails.
+- **An output file path through `..` can be built over by its own parent.**  For `a/../a` with `a`
+  absent, under `All`, building the parent `a/..` creates `a` as a directory where the file
+  goes.  Both halves approve the path, and the write then fails.
 - **On Windows:** there is no `SIGPIPE`, so `reset_sigpipe` does nothing; a volume mounted into an
   empty NTFS folder is not detected; and the tests do not stage symbolic links, permissions, or a
   closed pipe there.
