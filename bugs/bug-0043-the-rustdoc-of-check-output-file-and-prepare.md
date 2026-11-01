@@ -1,0 +1,20 @@
+# bug-0043: The rustdoc of check_output_file and prepare_output_file lists the output file's every-mode refusals but leaves out DotDotAfterMissing
+
+Filed by code-sweep on 1-Nov-2026.
+
+This is doc drift from the fix for bug-0040 and bug-0041: only the variant's own doc and the README gained the leaf refusal.  It is kept apart from the CHANGELOG candidate because each fix is to different text, and fixing one would not fix the other.
+
+From code-sweep’s change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by opus:cli-agent-first-auditor; cross-model verdicts: fable agree, sol dispute; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `58623f352fb6`.
+
+**Claim:** Commit 9ad890c added a fourth refusal on the output file itself, in every mode: an absent path whose last component is `..` is refused as PathError::DotDotAfterMissing (check_output_leaf, line 912). The rustdoc of both public functions still lists only three refusals: NotAFile, DanglingSymlink, and MountRoot 'in every mode'. That list reads as complete. The commit message says the rustdoc was updated, but only the variant's own doc and the README were changed.
+
+**Location:** `src/paths.rs:855-860, src/paths.rs:873-877`
+
+**Evidence:** src/paths.rs:858-860: "A directory in the file's place is [`PathError::NotAFile`], a dangling link is [`PathError::DanglingSymlink`], and an absent file named for a mount point is [`PathError::MountRoot`] in every mode."  src/paths.rs:875-877 (prepare_output_file): "An absent file named for a mount point (`/Volumes/Backup`) is refused as [`PathError::MountRoot`] in every mode, since writing it would create one."  The code at src/paths.rs:910-914: `Presence::Absent if matches!(path.components().next_back(), Some(Component::ParentDir)) => Err(PathError::DotDotAfterMissing(path.to_path_buf()))`, with no mode condition.
+
+**Severity:** docs
+
+**Basis:** `doc-drift`: adjudicated by Opus (The paragraph covers every other outcome of the probe (Undeterminable, Clobber, NotAFile, DanglingSymlink, MountRoot), so it reads as the complete list and misses only the case this commit added. The commit says the rustdoc was updated, but only the variant's own doc was. Sol's objection that the list does not claim to be complete cites nothing that shows the omission was meant, so it does not outweigh the commit's own record that the code is intended.): src/paths.rs:855-860 (check_output_file rustdoc) lists what the probe of the file itself refuses: "a file that could not be inspected is [`PathError::Undeterminable`] … it cannot slip past [`Clobber::Deny`]. A directory in the file's place is [`PathError::NotAFile`], a dangling link is [`PathError::DanglingSymlink`], and an absent file named for a mount point is [`PathError::MountRoot`] in every mode." prepare_output_file's rustdoc (873-877) names only MountRoot as the every-mode refusal of an absent file. The code refuses one more case in every mode: src/paths.rs:912-913, `Presence::Absent if matches!(path.components().next_back(), Some(Component::ParentDir)) => Err(PathError::DotDotAfterMissing(..))`, with no mode condition. A caller reaches it through check_output_file or prepare_output_file under any CreateMode with `x/a/..` where x/a is absent. The code is plainly the intended side. The commit message of 9ad890c says "check_output_leaf refuses an absent output file whose own path ends in `..`, in every mode" and "README, rustdoc, and CHANGELOG say so". CHANGELOG.md:11 says "In every mode, so is an output file whose own path ends in such a `..`". README.md:147-149 and the variant's own doc (paths.rs:368-369, "or, in every mode, the last component of an output file's path") say the same, and the test all_refuses_a_dotdot_after_a_level_it_would_build pins the refusal. The fix is to the text alone: add DotDotAfterMissing to both function docs.
+
+**Reproducer:** `cargo test output_file_rustdoc_names_dotdot_after_missing` failed on the reviewed tree.  The test is `bugs/bug-0043/reproducer.patch`; apply it with `git apply`.
+
