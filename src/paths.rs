@@ -855,9 +855,9 @@ fn create_levels(dir: &Path, levels: &[PathBuf]) -> Result<(), PathError> {
 /// The probe of the file is the safety-critical half, so do not pair [`check_destination`] on the
 /// parent with a probe of your own: a file that could not be inspected is
 /// [`PathError::Undeterminable`], never approved, so it cannot slip past [`Clobber::Deny`].  A
-/// directory in the file's place is [`PathError::NotAFile`], a dangling link is
-/// [`PathError::DanglingSymlink`], and an absent file named for a mount point is
-/// [`PathError::MountRoot`] in every mode.
+/// directory in the file's place is [`PathError::NotAFile`], and a dangling link is
+/// [`PathError::DanglingSymlink`].  In every mode, an absent file named for a mount point is
+/// [`PathError::MountRoot`], and one whose path ends in `..` is [`PathError::DotDotAfterMissing`].
 pub fn check_output_file(
     path: &Path,
     dir_mode: CreateMode,
@@ -874,7 +874,8 @@ pub fn check_output_file(
 /// then ensure its parent directory per `dir_mode` and the mount-root floor.  Does not create the
 /// file; returns once the parent is ready and the clobber check passes.  An absent file named for a
 /// mount point (`/Volumes/Backup`) is refused as [`PathError::MountRoot`] in every mode, since
-/// writing it would create one.
+/// writing it would create one.  So is an absent file whose path ends in `..`, as
+/// [`PathError::DotDotAfterMissing`], since once its parent is built that path names a directory.
 ///
 /// Runs every check in [`check_output_file`], then creates the parent's missing levels if
 /// `dir_mode` allows.  A tool with a `--dry-run` mode calls [`check_output_file`] instead on that

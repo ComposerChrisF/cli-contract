@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - On macOS, with `L` a link to `/opt`, `L/zz/../../Volumes/X` was approved.  Once `zz` is built it is `/Volumes/X`, so run as root the create made a mount point (bug-0041).
   - The output file `a/../a`, with `a` absent, was approved under `All`, and `x/a/..`, with `x/a` absent, under `Final` and `All`.  Once the parent was built, the path named a directory, so the write failed (bug-0040).
 
-  A destination such as `new/../new`, which was built before, is refused too: spell it without the `..`.  On Windows `..` is resolved before the file system sees it, so the refusal meets only a verbatim (`\\?\`) path, where `..` is a literal name that no create can make.
+  A destination such as `new/../new`, which was built before, is refused too: spell it without the `..`.  On Windows `..` is resolved before the file system sees it, so a `..` among the directories to be built is refused only in a verbatim (`\\?\`) path, where `..` is a literal name that no create can make.
 
 ## [0.6.0] - 2026-10-31
 
