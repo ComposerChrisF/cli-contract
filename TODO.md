@@ -6,12 +6,16 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 
 ## The release
 
-- [ ] **Publish 0.6.0 to crates.io.**  The release commit makes the API changes the CHANGELOG
-  lists under 0.6.0, and drops `publish = false`.
+- [x] **0.6.0 is on crates.io** (31-Oct-2026), tagged `cli-contract-v0.6.0`.  docs.rs renders
+  the page with the clap impls visible, and the `.crate`’s normalized `Cargo.toml` says
+  `default = []`.
 
-  After publishing, check that docs.rs renders the page with the clap impls visible, and that the
-  `.crate`’s normalized `Cargo.toml` says `default = []`.  Then set the semver baseline, so every
-  later release is checked against 0.6.0.
+- [ ] **Fix [bug-0040](bugs/bug-0040-an-output-path-through-dotdot-has-its-parent-build-the-file-as-a-directory.md)
+  as 0.6.1**: under `All`, `a/../a` with `a` absent is approved, and building the parent creates
+  `a` as a directory.  Listed under Known limitations until then.
+
+- [ ] **Set the semver baseline**, so every later release is checked against 0.6.0.  Nothing
+  checks it yet: no CI job, and `cargo-semver-checks` is not installed here.
 
 ## Open plans
 
