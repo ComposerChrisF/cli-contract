@@ -1,0 +1,33 @@
+# bug-0040: An output file path through `..` can have its own parent chain build the file’s path as a directory
+
+**Severity:** low.  The failure is loud and loses no data, but it breaks a promise the rustdoc makes.
+
+## What happens
+
+Given the output path `a/../a`, with `a` absent, under `CreateMode::All`:
+
+```text
+check:   Ok(())
+prepare: Ok(())
+a is a dir now: true
+write: Err(IsADirectory)
+again: Err(NotAFile("a/../a"))
+```
+
+`check_output_file` and `prepare_output_file` both approve.  `prepare_output_file` then builds the parent, `a/..`, which creates `a`: the file’s own path, as a directory.  The caller’s write fails with `IsADirectory`, and a second call refuses the path as `NotAFile`.
+
+## The promise it breaks
+
+`check_output_file`’s rustdoc says that on `Ok` the file may be written once its parent’s missing levels are created, and `prepare_output_file`’s says it returns once the parent is ready and the clobber check passes.  Here the parent’s creation makes the write impossible.
+
+## Why
+
+The leaf is classified before the parent is built, against the path as spelled.  `a/../a` resolves to `a`, which is absent, so the leaf passes.  The parent chain `a/..` approves `a` as a level to create, and the OS resolves `..` after that link-free `a`, so the file’s path is now a directory.  A destination directory spelled the same way (`x/../x`) ends correctly, since the directory it wanted is the one built; only a file collides with its own parent chain.
+
+## Reproducer
+
+`bugs/bug-0040/repro-main.rs`: a binary that depends on this crate by path, run with a scratch directory as its argument.  The property test `check_and_prepare_agree_on_every_output_file_shape_mode_clobber_and_spelling` in `tests/check_equals_ensure.rs` also reaches it, and skips its “check approves again after prepare” assertion for exactly this case.
+
+## Fix direction
+
+Refuse, in the shared leaf check, an output path whose own resolved location is a level the parent chain would create: compare the lexically absolute leaf with the levels `approved_levels` returns.  Both halves then refuse it the same way, with no write.  A plainer alternative is to refuse any output path whose parent contains `..`, which is wider than the fault.  Either needs a test that fails with the fix reverted.
