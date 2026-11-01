@@ -31,3 +31,5 @@ The leaf is classified before the parent is built, against the path as spelled. 
 ## Fix direction
 
 Refuse, in the shared leaf check, an output path whose own resolved location is a level the parent chain would create: compare the lexically absolute leaf with the levels `approved_levels` returns.  Both halves then refuse it the same way, with no write.  A plainer alternative is to refuse any output path whose parent contains `..`, which is wider than the fault.  Either needs a test that fails with the fix reverted.
+
+**Amended 31-Oct-2026:** bug-0041 has the same cause, a `..` after a level not yet built, which no check can resolve before the create.  There it hides `/Volumes` from the floor.  The leaf comparison above would fix only this report, so the fix is bug-0041’s instead: under `All`, refuse a chain one of whose missing levels is a `..`.  `a/../a`’s parent chain, `a/..`, has one.
