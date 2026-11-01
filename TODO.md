@@ -30,11 +30,6 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   identity**, as `/Volumes` is recognised by device and inode, so a symlinked or bind-mounted
   `/mnt` cannot pass the floor.  The README lists the gap under Known limitations.
 
-- [ ] [plan-0013](plans/plan-0013-check-output-file-the-dry-run-half.md) — **`check_output_file`**,
-  the dry-run half of `prepare_output_file`, which creates parent directories under `Final` and
-  `All`, so a dry run over output files writes to disk.  Additive.  Listed under Known
-  limitations.
-
 - [ ] [plan-0014](plans/plan-0014-a-create-below-a-mount-point-that-outlives-its-volume.md) —
   **a create below a mount point that outlives its volume**: on Linux an fstab, systemd, bind, or
   hand-made mount point stays after the unmount, so `Final` and `All` build the backup on the root
@@ -50,6 +45,10 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   symlink-facts primitive**: the “crate reports, caller decides” primitive behind a per-tool
   symlink policy, back in a shape that cannot fail open, every unknown an `Err`, never a `None`.
   `symlink_info` was removed before 0.6.0 for failing open.  Additive.
+
+- [ ] [plan-0018](plans/plan-0018-refuse-an-output-file-path-that-ends-in-a-separator.md) — **refuse
+  an output file path that ends in a separator**: `out.pdf/` is checked as `out.pdf` and approved,
+  though no file can be written there.  The write fails loudly today.
 
 ## Smaller items
 

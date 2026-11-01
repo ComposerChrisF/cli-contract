@@ -18,7 +18,7 @@ again: Err(NotAFile("a/../a"))
 
 ## The promise it breaks
 
-`check_output_file`’s rustdoc says that on `Ok` the file may be written once its parent’s missing levels are created, and `prepare_output_file`’s says it returns once the parent is ready and the clobber check passes.  Here the parent’s creation makes the write impossible.
+`prepare_output_file`’s rustdoc says it enforces “the clobber policy on the file itself, then” ensures its parent directory, and “returns once the parent is ready and the clobber check passes”.  Here the parent’s creation itself puts a directory where the file goes, so by the time it returns `Ok`, its own check would refuse the path as `NotAFile`.  `check_output_file` returns the same `Ok`, as the dry run of a call that cannot leave the file writable.
 
 ## Why
 

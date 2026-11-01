@@ -15,7 +15,7 @@ The first public release.
   - inputs: `require_input_path`, `require_input_dir(path)`, and `require_marker`;
   - output directories: `check_destination` (the dry run) and `ensure_destination` (the live run), under a `DestPolicy` built from `CreateMode` and an optional marker by `DestPolicy::from_flags`;
   - `MarkerName`, a marker validated as one path component when it is made, by `MarkerName::new` or `FromStr`, so a clap flag can be typed `Option<MarkerName>`; and `MarkerNameError`, its error, which leaves the exit code to the caller;
-  - output files: `prepare_output_file`, with `Clobber`;
+  - output files: `check_output_file` (the dry run) and `prepare_output_file` (the live run), with `Clobber`;
   - the mount-root floor, `is_mount_root`, which no mode can override;
   - a symlink primitive for a caller’s own policy: `reject_symlink`.
 - **BrokenPipe:** `reset_sigpipe` for a tool whose output is the product, and `ignore_broken_pipe` (with `is_broken_pipe`) for a tool that must finish its work when its output pipe closes.

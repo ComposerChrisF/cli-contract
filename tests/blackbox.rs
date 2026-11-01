@@ -6,8 +6,9 @@
 use std::path::{Path, PathBuf};
 
 use cli_contract::{
-    check_destination, ensure_destination, exit, prepare_output_file, reject_symlink,
-    require_input_dir, require_input_path, Clobber, CreateMode, DestPolicy, PathError,
+    check_destination, check_output_file, ensure_destination, exit, prepare_output_file,
+    reject_symlink, require_input_dir, require_input_path, Clobber, CreateMode, DestPolicy,
+    PathError,
 };
 // Used only by the floor tests, which do not run on Windows.
 #[cfg(not(windows))]
@@ -639,8 +640,11 @@ fn an_empty_path_is_never_approved() {
     for mode in MODES {
         for clobber in [Clobber::Allow, Clobber::Deny] {
             let r = prepare_output_file(p, mode, clobber);
-            if r.is_ok() {
-                wrong.push(format!("prepare_output_file {mode} {clobber}: Ok"));
+            let c = check_output_file(p, mode, clobber);
+            if r.is_ok() || format!("{c:?}") != format!("{r:?}") {
+                wrong.push(format!(
+                    "{mode} {clobber}: check_output_file {c:?}; prepare_output_file {r:?}"
+                ));
             }
         }
         let c = check_destination(p, &DestPolicy::Create(mode));

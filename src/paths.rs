@@ -826,40 +826,87 @@ fn create_levels(dir: &Path, levels: &[PathBuf]) -> Result<(), PathError> {
     Ok(())
 }
 
+/// Validate a caller-asserted **output file** path as [`prepare_output_file`] does — the clobber
+/// policy on the file itself, then its parent directory per `dir_mode` and the mount-root floor —
+/// **creating nothing**.  On `Ok`, the file passed the clobber policy and every check on the file
+/// itself, and its parent either already exists and passes every check, or is absent and
+/// `dir_mode` permits [`prepare_output_file`] to create it.  The file itself is neither created
+/// nor checked for writability, by this or by [`prepare_output_file`]: a spelling that ends in a
+/// separator is checked as the file it names (see the README's symlink section), though no file
+/// can be written under that spelling.
+///
+/// This is the `--dry-run` half of [`prepare_output_file`]: the same verdicts, and zero filesystem
+/// writes.  Call this in a dry run, and [`prepare_output_file`] in a live run.  Both probe the file
+/// the same way, and the parent goes through [`check_destination`] here and
+/// [`ensure_destination`] there, so, as for a destination directory, only an environmental failure
+/// at creation time can separate them.
+///
+/// The probe of the file is the safety-critical half, so do not pair [`check_destination`] on the
+/// parent with a probe of your own: a file that could not be inspected is
+/// [`PathError::Undeterminable`], never approved, so it cannot slip past [`Clobber::Deny`].  A
+/// directory in the file's place is [`PathError::NotAFile`], a dangling link is
+/// [`PathError::DanglingSymlink`], and an absent file named for a mount point is
+/// [`PathError::MountRoot`] in every mode.
+pub fn check_output_file(
+    path: &Path,
+    dir_mode: CreateMode,
+    clobber: Clobber,
+) -> Result<(), PathError> {
+    check_output_leaf(path, clobber)?;
+    match output_parent(path)? {
+        Some(parent) => check_destination(parent, &DestPolicy::Create(dir_mode)),
+        None => Ok(()),
+    }
+}
+
 /// Prepare a caller-asserted **output file** path: enforce the clobber policy on the file itself,
 /// then ensure its parent directory per `dir_mode` and the mount-root floor.  Does not create the
 /// file; returns once the parent is ready and the clobber check passes.  An absent file named for a
 /// mount point (`/Volumes/Backup`) is refused as [`PathError::MountRoot`] in every mode, since
 /// writing it would create one.
+///
+/// Runs every check in [`check_output_file`], then creates the parent's missing levels if
+/// `dir_mode` allows.  A tool with a `--dry-run` mode calls [`check_output_file`] instead on that
+/// path.
 pub fn prepare_output_file(
     path: &Path,
     dir_mode: CreateMode,
     clobber: Clobber,
 ) -> Result<(), PathError> {
+    check_output_leaf(path, clobber)?;
+    match output_parent(path)? {
+        Some(parent) => ensure_destination(parent, &DestPolicy::Create(dir_mode)),
+        None => Ok(()),
+    }
+}
+
+/// The checks an output file meets on the file itself, before its parent is checked or ensured:
+/// the same for [`check_output_file`] and [`prepare_output_file`].
+fn check_output_leaf(path: &Path, clobber: Clobber) -> Result<(), PathError> {
     // One classification of the leaf, three ways.  A leaf that could not be stat'd must not slip
     // past `Clobber::Deny`: the refusal is the guard, and skipping it silently for a file we could
     // not inspect is the guard failing open.
     // A link to nothing is refused: the write would create its target somewhere never validated.
     match probe_resolved(path)? {
-        // A directory in the output file's place is a specific error, distinct from clobbering a file.
-        Presence::Present(ft) if ft.is_dir() => {
-            return Err(PathError::NotAFile(path.to_path_buf()))
-        }
+        // A directory in the output file's place is a specific error, distinct from clobbering a
+        // file.
+        Presence::Present(ft) if ft.is_dir() => Err(PathError::NotAFile(path.to_path_buf())),
         Presence::Present(_) if clobber == Clobber::Deny => {
-            return Err(PathError::Clobber(path.to_path_buf()))
+            Err(PathError::Clobber(path.to_path_buf()))
         }
         // The write would create the mount point, as a file.
-        Presence::Absent if mount_root(path)? => {
-            return Err(PathError::MountRoot(path.to_path_buf()))
-        }
-        Presence::Present(_) | Presence::Absent => {}
+        Presence::Absent if mount_root(path)? => Err(PathError::MountRoot(path.to_path_buf())),
+        Presence::Present(_) | Presence::Absent => Ok(()),
     }
+}
+
+/// The directory an output file is written into, when there is one to check: `None` for the
+/// current directory, and [`PathError::MissingDestination`] for a path with no parent at all.
+fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
     match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => {
-            // The output's parent directory is itself a caller-asserted destination (no marker).
-            ensure_destination(parent, &DestPolicy::Create(dir_mode))
-        }
-        Some(_) => Ok(()), // writing into the current directory: nothing to ensure
+        // The output's parent directory is itself a caller-asserted destination (no marker).
+        Some(parent) if !parent.as_os_str().is_empty() => Ok(Some(parent)),
+        Some(_) => Ok(None), // writing into the current directory: nothing to check or create
         // A root that is not there (on Windows, an absent drive or share): no file can be written.
         None => Err(PathError::MissingDestination(path.to_path_buf())),
     }
@@ -2748,6 +2795,148 @@ mod tests {
         std::fs::remove_dir_all(&d).unwrap();
     }
 
+    // --- check_output_file: the dry-run half of an output file (validates, never creates) -----
+
+    /// Whether `path` is provably absent: `NotFound`, and nothing else.
+    fn gone(path: &Path) -> bool {
+        matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+    }
+
+    #[test]
+    fn check_output_file_creates_nothing_where_prepare_output_file_would_create_a_parent() {
+        let d = tmp("check_outfile_no_create");
+        // `final`, the file's parent missing and the parent's own parent there.
+        let shallow = d.join("new").join("out.pdf");
+        // `all`, two levels missing above the file.
+        let deep = d.join("a").join("b").join("out.pdf");
+        for clobber in [Clobber::Allow, Clobber::Deny] {
+            check_output_file(&shallow, CreateMode::Final, clobber).unwrap();
+            assert!(
+                gone(&d.join("new")),
+                "{clobber}: check_output_file created the parent"
+            );
+            check_output_file(&deep, CreateMode::All, clobber).unwrap();
+            assert!(
+                gone(&d.join("a")),
+                "{clobber}: check_output_file created the chain"
+            );
+        }
+
+        // prepare_output_file, by contrast, does create the parents, and never the file — proving
+        // the two differ only in that.
+        prepare_output_file(&shallow, CreateMode::Final, Clobber::Deny).unwrap();
+        prepare_output_file(&deep, CreateMode::All, Clobber::Deny).unwrap();
+        assert!(d.join("new").is_dir() && d.join("a").join("b").is_dir());
+        assert!(
+            gone(&shallow) && gone(&deep),
+            "prepare_output_file created the file"
+        );
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// The dry run of an output file must refuse `path` with an error `refusal` accepts, in every
+    /// mode and under each of `clobbers`, and with the very error the live run gives.
+    fn assert_check_output_file_refuses(
+        path: &Path,
+        clobbers: &[Clobber],
+        refusal: impl Fn(&PathError) -> bool,
+    ) {
+        let mut wrong = Vec::new();
+        for mode in [CreateMode::None, CreateMode::Final, CreateMode::All] {
+            for &clobber in clobbers {
+                let checked = check_output_file(path, mode, clobber);
+                let prepared = prepare_output_file(path, mode, clobber);
+                if !matches!(&checked, Err(e) if refusal(e))
+                    || format!("{checked:?}") != format!("{prepared:?}")
+                {
+                    wrong.push(format!(
+                        "{mode} {clobber}: check {checked:?}; prepare {prepared:?}"
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}: {wrong:#?}", path.display());
+    }
+
+    #[test]
+    fn check_output_file_refuses_every_leaf_that_prepare_output_file_refuses() {
+        let both = [Clobber::Allow, Clobber::Deny];
+        let d = tmp("check_outfile_leaf");
+
+        // A directory in the file's place, under either policy.
+        let dir = d.join("dir.pdf");
+        std::fs::create_dir(&dir).unwrap();
+        assert_check_output_file_refuses(
+            &dir,
+            &both,
+            |e| matches!(e, PathError::NotAFile(p) if p == &dir),
+        );
+
+        // An existing file under Deny; Allow lets it through, in the dry run as in the live run.
+        let old = d.join("old.pdf");
+        std::fs::write(&old, b"old").unwrap();
+        assert_check_output_file_refuses(
+            &old,
+            &[Clobber::Deny],
+            |e| matches!(e, PathError::Clobber(p) if p == &old),
+        );
+        assert!(check_output_file(&old, CreateMode::None, Clobber::Allow).is_ok());
+        assert_eq!(std::fs::read(&old).unwrap(), b"old");
+
+        // The empty path names nothing, and the floor cannot resolve it.
+        let empty = Path::new("");
+        assert_check_output_file_refuses(
+            empty,
+            &both,
+            |e| matches!(e, PathError::Undeterminable { path, .. } if path == empty),
+        );
+
+        // An absent file named for a mount point: writing it would create one.
+        if cfg!(not(windows)) {
+            let vol = Path::new("/Volumes/NoSuchVolume_cc_check_out");
+            assert!(gone(vol), "the test needs {vol:?} absent");
+            assert_check_output_file_refuses(
+                vol,
+                &both,
+                |e| matches!(e, PathError::MountRoot(p) if p == vol),
+            );
+        }
+
+        // A dangling link: the write would create its target somewhere never validated.
+        #[cfg(unix)]
+        {
+            let ghost = d.join("no_such_dir");
+            let dangling = d.join("dangling.pdf");
+            std::os::unix::fs::symlink(ghost.join("real.pdf"), &dangling).unwrap();
+            assert_check_output_file_refuses(
+                &dangling,
+                &both,
+                |e| matches!(e, PathError::DanglingSymlink(p) if p == &dangling),
+            );
+            assert!(gone(&ghost), "the dangling link's target was created");
+        }
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_output_file_does_not_approve_a_file_it_could_not_inspect() {
+        // Not under Deny, where approving would be the no-clobber guard failing open, nor under
+        // Allow, where a directory or a dangling link at the path would have been refused.
+        if skipped_as_root() {
+            return;
+        }
+        let f = LockedDir::new();
+        for leaf in ["real.txt", "nope.pdf"] {
+            let p = f.locked.join(leaf);
+            assert_check_output_file_refuses(
+                &p,
+                &[Clobber::Allow, Clobber::Deny],
+                |e| matches!(e, PathError::Undeterminable { path, .. } if path == &p),
+            );
+        }
+    }
+
     // --- a marker is a name, never a path -----------------------------------------------------
 
     /// Every shape `Path::join` would reinterpret: an absolute value replaces the directory, a
@@ -2995,6 +3184,7 @@ mod tests {
             create_after_check(root, &all).unwrap_err(),
             prepare_output_file(&root.join("out.pdf"), CreateMode::All, Clobber::Allow)
                 .unwrap_err(),
+            check_output_file(&root.join("out.pdf"), CreateMode::All, Clobber::Allow).unwrap_err(),
         ] {
             assert!(
                 matches!(&err, PathError::MountRoot(p) if p == root),
@@ -3005,11 +3195,15 @@ mod tests {
         let bare = drive.trim_end_matches('\\');
         for p in [root, Path::new(bare)] {
             for mode in [CreateMode::None, CreateMode::Final, CreateMode::All] {
-                let got = prepare_output_file(p, mode, Clobber::Allow);
-                assert!(
-                    matches!(&got, Err(PathError::MissingDestination(q)) if q == p),
-                    "{p:?} {mode}: {got:?}"
-                );
+                for got in [
+                    prepare_output_file(p, mode, Clobber::Allow),
+                    check_output_file(p, mode, Clobber::Allow),
+                ] {
+                    assert!(
+                        matches!(&got, Err(PathError::MissingDestination(q)) if q == p),
+                        "{p:?} {mode}: {got:?}"
+                    );
+                }
             }
         }
     }

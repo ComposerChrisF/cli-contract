@@ -1,6 +1,7 @@
 //! The README's strongest claim, tested over every case rather than by example: `check_destination`
 //! and `ensure_destination` never disagree about the contract, only an environmental failure at
-//! creation time can separate them, and the check writes nothing.
+//! creation time can separate them, and the check writes nothing.  The same holds for an output
+//! file, between `check_output_file` and `prepare_output_file`.
 //!
 //! The space is small enough to enumerate, so it is enumerated, not sampled: every shape of a one-
 //! or two-level chain below a scratch directory, every policy, and five spellings of the same
@@ -12,8 +13,17 @@
 //!    the fixture staged an environmental failure (a read-only directory), which may only surface
 //!    as `PathError::Io` with `PermissionDenied`;
 //! 4. whatever `ensure_destination` creates is a directory, never a file or a link.
+//!
+//! The output file is enumerated the same way, as the deepest level of a chain of up to three, so
+//! its parent's chain can be two levels deep and `Final` and `All` differ: every shape, every mode,
+//! both clobber policies, and the same five spellings.  The four assertions are the same, with
+//! `check_output_file` and `prepare_output_file` in place of the destination pair, and in 3 the
+//! file's parent is the directory left there.
 
-use cli_contract::{check_destination, ensure_destination, CreateMode, DestPolicy, PathError};
+use cli_contract::{
+    check_destination, check_output_file, ensure_destination, prepare_output_file, Clobber,
+    CreateMode, DestPolicy, PathError,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,8 +112,37 @@ const SPELLINGS: [Spelling; 5] = [
     Spelling::RelativeThroughDotDot,
 ];
 
-const LEVELS: [&str; 2] = ["a", "b"];
+const LEVELS: [&str; 3] = ["a", "b", "c"];
 const MARKER: &str = "m";
+const MODES: [CreateMode; 3] = [CreateMode::None, CreateMode::Final, CreateMode::All];
+const CLOBBERS: [Clobber; 2] = [Clobber::Allow, Clobber::Deny];
+
+/// Every chain of up to `max` levels, with the depth of the path under test: each shape at the
+/// first level, and every shape again below a level that can hold one.  A deeper path under a
+/// level that cannot hold one is a case of its own (a file or a link in the way), so that chain
+/// stops there while the depth goes on.
+fn chains(shapes: &[Shape], max: usize) -> Vec<(Vec<Shape>, usize)> {
+    let mut out = Vec::new();
+    let mut above: Vec<Vec<Shape>> = vec![Vec::new()];
+    for depth in 1..=max {
+        let mut here = Vec::new();
+        for chain in above {
+            match chain.last() {
+                Some(last) if !last.holds_a_level() => here.push(chain),
+                _ => {
+                    for &shape in shapes {
+                        let mut longer = chain.clone();
+                        longer.push(shape);
+                        here.push(longer);
+                    }
+                }
+            }
+        }
+        out.extend(here.iter().map(|chain| (chain.clone(), depth)));
+        above = here;
+    }
+    out
+}
 
 fn policies() -> Vec<DestPolicy> {
     vec![
@@ -301,6 +340,7 @@ impl Drop for CwdGuard {
 }
 
 #[test]
+#[serial_test::serial] // set_current_dir is process-global
 fn check_and_ensure_agree_on_every_shape_policy_and_spelling() {
     let privileged = privileged();
     if privileged {
@@ -308,21 +348,9 @@ fn check_and_ensure_agree_on_every_shape_policy_and_spelling() {
     }
     let shapes = Shape::all(privileged);
 
-    // Every chain: one level, or two where the first can hold a second.  A two-level destination
-    // under a first level that cannot hold one is a case of its own (a file or a link in the way).
-    let mut chains: Vec<(Vec<Shape>, usize)> = Vec::new();
-    for &a in &shapes {
-        chains.push((vec![a], 1));
-        if a.holds_a_level() {
-            for &b in &shapes {
-                chains.push((vec![a, b], 2));
-            }
-        } else {
-            chains.push((vec![a], 2));
-        }
-    }
+    // Every chain: one level, or two where the first can hold a second.
     let mut cases = 0;
-    for (chain, depth) in &chains {
+    for (chain, depth) in &chains(&shapes, 2) {
         let leaf = if chain.len() == *depth {
             chain[depth - 1]
         } else {
@@ -400,6 +428,103 @@ fn check_and_ensure_agree_on_every_shape_policy_and_spelling() {
                             assert!(
                                 kind.starts_with("dir"),
                                 "ensure created a {kind} at {}: {case}",
+                                path.display()
+                            );
+                        }
+                    }
+                    cases += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{cases} cases");
+}
+
+#[test]
+#[serial_test::serial] // set_current_dir is process-global
+fn check_and_prepare_agree_on_every_output_file_shape_mode_clobber_and_spelling() {
+    let privileged = privileged();
+    if privileged {
+        eprintln!("SKIPPED the read-only and locked shapes: chmod does not stop this process");
+    }
+    let shapes = Shape::all(privileged);
+
+    // The output file is the deepest level of a chain of up to three, so its parent's chain is up
+    // to two levels deep: deep enough for `Final` to refuse what `All` builds.
+    let mut cases = 0;
+    for (chain, depth) in &chains(&shapes, 3) {
+        for mode in MODES {
+            for clobber in CLOBBERS {
+                for spelling in SPELLINGS {
+                    // As above: `a/..` through a link to `/Volumes` is `/`.
+                    #[cfg(target_os = "macos")]
+                    if chain.contains(&Shape::LinkToVolumes)
+                        && matches!(spelling, Spelling::RelativeThroughDotDot)
+                    {
+                        continue;
+                    }
+                    let fx = Fixture::build(chain, false);
+                    let _cwd = CwdGuard::set(&fx.ws);
+                    let file = fx.destination(*depth, spelling);
+                    let case = format!(
+                        "chain {chain:?}, depth {depth}, {mode}, {clobber}, {spelling:?} ({})",
+                        file.display()
+                    );
+
+                    let before = snapshot(&fx.ws);
+                    let checked = check_output_file(&file, mode, clobber);
+                    assert_eq!(snapshot(&fx.ws), before, "check wrote to disk: {case}");
+
+                    let prepared = prepare_output_file(&file, mode, clobber);
+                    let after = snapshot(&fx.ws);
+                    match (&checked, &prepared) {
+                        (Err(_), _) => {
+                            assert_eq!(
+                                verdict(&prepared),
+                                verdict(&checked),
+                                "prepare disagreed with a refusing check: {case}"
+                            );
+                            assert_eq!(after, before, "a refused prepare wrote to disk: {case}");
+                        }
+                        (Ok(()), Ok(())) => {
+                            let parent = fx.destination(depth - 1, Spelling::Absolute);
+                            assert!(
+                                fs::metadata(&parent).map(|m| m.is_dir()).unwrap_or(false),
+                                "prepare returned Ok without the file's parent there: {case}"
+                            );
+                            // Not for `a/../a`: building its parent, `a/..`, builds `a`, the
+                            // file's own path, as a directory.  Both halves approved it, so they
+                            // agree; that the approved file cannot then be written is a defect of
+                            // the pair (bug-0040), not a disagreement between them.
+                            let recheck = check_output_file(&file, mode, clobber);
+                            let parent_built_the_file = *depth == 1
+                                && matches!(spelling, Spelling::RelativeThroughDotDot)
+                                && matches!(&recheck, Err(PathError::NotAFile(p)) if p == &file);
+                            assert!(
+                                parent_built_the_file || recheck.is_ok(),
+                                "check refused what prepare had just approved and built: {case}"
+                            );
+                        }
+                        (Ok(()), Err(PathError::Io { source, .. })) => {
+                            #[cfg(unix)]
+                            let staged = chain.contains(&Shape::ReadOnly);
+                            #[cfg(not(unix))]
+                            let staged = false;
+                            assert!(
+                                staged && source.kind() == std::io::ErrorKind::PermissionDenied,
+                                "prepare failed where check approved, with no environmental \
+                                 failure staged: {source}: {case}"
+                            );
+                        }
+                        (Ok(()), Err(e)) => {
+                            panic!("prepare refused ({e:?}) what check approved: {case}")
+                        }
+                    }
+                    for (path, kind) in &after {
+                        if !before.contains_key(path) {
+                            assert!(
+                                kind.starts_with("dir"),
+                                "prepare created a {kind} at {}: {case}",
                                 path.display()
                             );
                         }

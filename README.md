@@ -92,15 +92,24 @@ unmounted volume (the floor does where the mount point goes away with its volume
 elsewhere) — a dry run reporting a plausible backup onto a disk that is not there is the exact
 false confidence this contract exists to kill — yet it must not create the directory it is only
 pretending to write into.  So `ensure_destination` is **check-then-create**, and `check_destination`
-is the check alone: the same contract verdicts, zero filesystem writes.
+is the check alone: the same contract verdicts, zero filesystem writes.  An output file has the same
+pair: `prepare_output_file` checks the file and then ensures its parent directory, creating the
+missing levels the mode permits, and `check_output_file` is the check alone.
 
 ```rust,ignore
 if args.dry_run { check_destination(&dest, &policy)? } else { ensure_destination(&dest, &policy)? }
+
+// An output file, whose parent is created as `mode` permits:
+if args.dry_run {
+    check_output_file(&out, mode, clobber)?
+} else {
+    prepare_output_file(&out, mode, clobber)?
+}
 ```
 
-Both run the same contract checks, so a dry run never disagrees with the live run about the
-_contract_ — only an environmental failure at creation time (permissions, a full disk, a race, a
-name the filesystem refuses) can separate them.
+The two halves of each pair run the same contract checks, so a dry run never disagrees with the
+live run about the _contract_ — only an environmental failure at creation time (permissions, a full
+disk, a race, a name the filesystem refuses) can separate them.
 
 ### The mount-root floor — unconditional
 
@@ -266,8 +275,8 @@ cli-contract = "0.6"
 cli-contract = { version = "0.6", features = ["clap"] }
 ```
 
-Runnable versions of the snippets above are in `examples/`: `inputs`, `destination` (with
-`--dry-run`), and `broken_pipe`.  For instance,
+Runnable versions of the snippets above are in `examples/`: `inputs`, `destination` (the
+directory half of the `--dry-run` snippet), and `broken_pipe`.  For instance,
 `cargo run --example destination -- --create-destination all --dry-run /tmp/demo/out`.
 
 ### Features
@@ -295,8 +304,6 @@ weighing the crate finds them in one place.
   hand-made mount point stays after the unmount.  Every mode approves the mount point itself, and
   `Final` and `All` can build below it, on the disk underneath; only a marker refuses.  A marker
   cannot yet be combined with a creating mode.
-- **An output file has no dry-run half.**  `prepare_output_file` creates the file’s missing parent
-  directories under `Final` and `All`, so a dry run over output files writes to disk.
 - **The Linux list over-refuses.**  Its depths assume volumes at `/mnt/<name>`,
   `/media/<user>/<label>`, and `/run/media/<user>/<label>`, so in a volume mounted directly at
   `/mnt`, `/media/<name>`, or `/run/media/<name>` nothing new can be made at its top level.  It
