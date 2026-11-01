@@ -1,0 +1,34 @@
+diff --git a/tests/blackbox.rs b/tests/blackbox.rs
+index 596565d..809ac2d 100644
+--- a/tests/blackbox.rs
++++ b/tests/blackbox.rs
+@@ -597,6 +597,29 @@ fn the_readme_table_is_the_help_block() {
+     }
+ }
+ 
++/// README: "in every mode so is an output file whose own path ends in such a `..`", with no
++/// platform exception; rustdoc of `DotDotAfterMissing`: "in every mode, the last component of an
++/// output file's path".  The CHANGELOG's 0.6.1 entry must not say that on Windows the refusal meets
++/// only a verbatim (`\\?\`) path: an ordinary path ending in `..` after an absent directory is
++/// refused (on Windows too, where `/` is a separator and `components()` yields the `..`).
++#[test]
++fn changelog_does_not_confine_the_output_file_dotdot_refusal_to_verbatim_paths() {
++    let tmp = tempfile::tempdir().unwrap();
++    let file = tmp.path().join("x").join("a").join(".."); // ordinary spelling, `x` absent
++    let r = check_output_file(&file, CreateMode::All, Clobber::Allow);
++    assert!(
++        matches!(&r, Err(PathError::DotDotAfterMissing(_))),
++        "an ordinary output path ending in `..` after an absent directory: {r:?}"
++    );
++    let changelog = include_str!("../CHANGELOG.md");
++    assert!(
++        !changelog.contains("so the refusal meets only a verbatim"),
++        "CHANGELOG 0.6.1 says that on Windows the `..` refusal meets only a verbatim (`\\\\?\\`) \
++         path, but the output-file leaf refusal (check_output_leaf, no cfg) reads the caller's own \
++         components and so also refuses an ordinary path such as `x\\a\\..` with `x` absent"
++    );
++}
++
+ // --- BrokenPipe, in a child process ----------------------------------------------------------
+ //
+ // README: with `ignore_broken_pipe`, "a closed pipe just stops output" and "the work runs to
