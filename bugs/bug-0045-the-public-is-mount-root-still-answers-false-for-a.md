@@ -1,12 +1,12 @@
 # bug-0045: The public `is_mount_root` still answers `false` for a `..` after a level not yet built that hides `/Volumes`
 
-Filed by code-sweep on 1-Nov-2026.
+Filed by the nightly review on 1-Nov-2026.
 
 **Spec question: Chris to rule.**  The repository’s contract does not settle that this is a defect: its basis is `inferred` (the evidence, and what follows if either side is right, is below).  Job 2 does not fix it until Chris rules.  To have it fixed as stated, he removes this paragraph and sets the basis on every **Basis:** line below that is not `spec` or `house-rule` to `ruled`, with why; if the code is the right side, he sets them to `doc-drift`, and the fix is to the text alone.
 
 Closed bug-0041 has the same cause, but its report and its fix named only check_destination and check_output_file, and the fix left the public `is_mount_root` and `mount_root` floor unguarded.  So this is a site the fix missed, filed as new because that report is closed.  plan-0015 covers only folding Undeterminable into a bool, not this.  The basis is inferred: it is a spec question whether the floor should fail closed here or document the gap.
 
-From code-sweep’s change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by fable; cross-model verdicts: no second model answered; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `d87419dfc3d4`.
+From the nightly change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by fable; cross-model verdicts: no second model answered; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `d87419dfc3d4`.
 
 **Claim:** The fix refuses a `..` after a missing level in floor_check_chain and check_output_leaf, but not in `mount_root`, which `is_mount_root` wraps and the README calls 'the sharpest reason to centralize': the safety-critical floor a caller composes its own check from. For `to_usr/zz/../../Volumes/X` with `to_usr` a link to `/usr` and `zz` absent, the lexical pass sees `[tmp, d, Volumes, X]`, and the identity probes of the path and its parent both get NotFound, which `is_volumes_or_a_child_of_it`'s doc treats as proof ('an absent path or parent proves that it is not it'), so `is_mount_root` returns `false` while `check_destination(.., All)` on the same path now returns DotDotAfterMissing. A caller that gates its own `create_dir_all` on `is_mount_root`, run as root, creates `/Volumes/X`: bug-0041 through the public primitive.
 

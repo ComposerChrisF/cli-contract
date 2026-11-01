@@ -1,10 +1,10 @@
 # bug-0043: The rustdoc of check_output_file and prepare_output_file lists the output file's every-mode refusals but leaves out DotDotAfterMissing
 
-Filed by code-sweep on 1-Nov-2026.
+Filed by the nightly review on 1-Nov-2026.
 
 This is doc drift from the fix for bug-0040 and bug-0041: only the variant's own doc and the README gained the leaf refusal.  It is kept apart from the CHANGELOG candidate because each fix is to different text, and fixing one would not fix the other.
 
-From code-sweep’s change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by opus:cli-agent-first-auditor; cross-model verdicts: fable agree, sol dispute; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `58623f352fb6`.
+From the nightly change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by opus:cli-agent-first-auditor; cross-model verdicts: fable agree, sol dispute; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `58623f352fb6`.
 
 **Claim:** Commit 9ad890c added a fourth refusal on the output file itself, in every mode: an absent path whose last component is `..` is refused as PathError::DotDotAfterMissing (check_output_leaf, line 912). The rustdoc of both public functions still lists only three refusals: NotAFile, DanglingSymlink, and MountRoot 'in every mode'. That list reads as complete. The commit message says the rustdoc was updated, but only the variant's own doc and the README were changed.
 

@@ -1,10 +1,10 @@
 # bug-0044: CHANGELOG 0.6.1 says that on Windows the `..` refusal meets only verbatim paths, but the output-file refusal also meets ordinary Windows paths
 
-Filed by code-sweep on 1-Nov-2026.
+Filed by the nightly review on 1-Nov-2026.
 
 This is doc drift in the CHANGELOG's Windows sentence, which is true of floor_check_chain only.  No open report or plan covers it, and the fix is to CHANGELOG.md alone.
 
-From code-sweep’s change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by opus:cli-agent-first-auditor; cross-model verdicts: fable agree, sol dispute; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `326ba20646c6`.
+From the nightly change review of `f540451065a3fa1e7cff9c26f0c8c6fb9569a7f1..9ad890c8c5520f3a1973e33ad86ce06d420907ad` on night `2026-11-01`.  Provenance `ai`: raised by opus:cli-agent-first-auditor; cross-model verdicts: fable agree, sol dispute; reproduced by the harness, which ran the test below and saw it fail.  Ledger fingerprint `326ba20646c6`.
 
 **Claim:** The 0.6.1 entry says that on Windows `..` is resolved before the file system sees it, so the refusal meets only a verbatim (`\\?\`) path. That is true of the chain-floor pass, because floor_check_chain works on `absolute()`'s output. The leaf check in check_output_leaf has no cfg and reads `path.components()` of the caller's own spelling. So an ordinary `x\a\..` with x absent is probed (Windows resolves it to x, which is absent) and refused as DotDotAfterMissing on Windows too.
 
