@@ -10,8 +10,11 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   the page with the clap impls visible, and the `.crate`’s normalized `Cargo.toml` says
   `default = []`.
 
-- [ ] **Publish 0.6.1**, which fixes bug-0040 and bug-0041: under `All`, a `..` after a directory
-  that does not exist yet is refused.  It waits on the maintainer.
+- [x] **0.6.1 is on crates.io** (1-Nov-2026), tagged `cli-contract-v0.6.1`.  It fixes bug-0040
+  and bug-0041: under `All`, a `..` after a directory that does not exist yet is refused.  That
+  also refuses a link-free `new/../new`, which 0.6.0 built, and the maintainer ruled it a patch
+  all the same: a narrowing that only refuses, made to close a safety hole, ships as a patch so
+  that every dependent on `"0.6"` picks it up (bug-0042).
 
 - [ ] **Set the semver baseline**, so every later release is checked against 0.6.0.  Nothing
   checks it yet: no CI job, and `cargo-semver-checks` is not installed here.
