@@ -222,6 +222,29 @@ fn all_refuses_a_dotdot_after_a_missing_level_that_hides_volumes() {
     }
 }
 
+/// bug-0045.  `is_mount_root` "fails closed" for "a path with a `..` after a level that does not
+/// exist".  `L/zz/../../Volumes/X` with `zz` absent is `/Volumes/X` once `L/zz` is built, and
+/// `check_destination(.., All)` refuses it as unprovable; the public floor must not call it safe.
+#[cfg(target_os = "macos")]
+#[test]
+fn is_mount_root_refuses_a_dotdot_after_a_missing_level_that_hides_volumes() {
+    let d = tempfile::tempdir().unwrap();
+    let to_usr = d.path().join("to_usr");
+    std::os::unix::fs::symlink("/usr", &to_usr).unwrap();
+    let dest = to_usr
+        .join("cli_contract_bb_absent")
+        .join("..")
+        .join("..")
+        .join("Volumes")
+        .join("cli_contract_bb");
+    assert!(
+        is_mount_root(&dest),
+        "is_mount_root({}) = false: a `..` after a missing level hides /Volumes from the public \
+         floor (bug-0041's shape), though check_destination(All) refuses the same path",
+        dest.display()
+    );
+}
+
 /// README: "a bare `Backup` with a cwd of `/Volumes` is refused" — the same resolution from `/`
 /// and from a sibling of the mount root.
 #[cfg(not(windows))]

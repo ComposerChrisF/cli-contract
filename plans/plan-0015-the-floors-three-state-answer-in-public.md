@@ -24,7 +24,7 @@ A caller’s own floor check uses it, so a refusal names its cause; plan-0017’
 
 ## Implementation Notes
 
-- The function exists; this makes it `pub`, documents it, and re-exports it from `lib.rs`.
+- The function exists, but since the fix for bug-0045 it is not the whole floor.  It leaves out the `..` check that `is_mount_root` makes, because the contract functions make that check their own way.  The public form must include it, so a `..` after a level that does not exist never answers `false`.  Making `mount_root` public as it is would re-open bug-0045.  With that check added, it is documented and re-exported from `lib.rs`.
 - The name is worth a look first: `mount_root` reads as a noun (“the mount root of this path”).  `check_mount_root` or `floor(path)` may say better that it answers a yes-or-no question.
 - Additive, so it can land in any 0.6.x.
 

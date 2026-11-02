@@ -4,6 +4,12 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.2] - 2026-11-02
+
+### Fixed
+
+- **`is_mount_root` answers `true` for a path with a `..` after a level that does not exist yet**, which 0.6.1’s contract functions already refuse.  On macOS, with `L` a link to `/usr`, it answered `false` for `L/zz/../../Volumes/X`, which is `/Volumes/X` once `zz` is built, so a caller that gated its own create on it could, run as root, make a mount point (bug-0045).  A stat that fails on the way to that level, for any reason but absence, refuses too.  A `..` after a level that exists, as in `/usr/../etc`, is judged as before; on Linux, which has no `/Volumes`, `/Volumes/../etc` is now refused.  On Windows, where `..` is resolved first, only a verbatim (`\\?\`) path keeps one.
+
 ## [0.6.1] - 2026-11-01
 
 ### Fixed

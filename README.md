@@ -143,11 +143,12 @@ means from the current directory, not its text.  (So `media/uploads` in a projec
 directory, while a bare `Backup` with a cwd of `/Volumes` is refused.)  Resolution is lexical: it
 touches no filesystem and does not resolve symlinks, so the list is matched against the literal
 path, including `..`, which after a symbolic link the OS resolves from the link’s target instead;
-only the identity check for `/Volumes` looks through a link, and it still sees the directory the
-OS will create in.  So under `All` a `..` after a level that does not exist yet is refused, as
-`PathError::DotDotAfterMissing`, and in every mode so is an output file whose own path ends in
-such a `..`: until that level is built, the OS has not resolved where the `..` leads, and nothing
-there can be checked.  If the current directory cannot be read at all, or the identity check’s
+only the identity check for `/Volumes` and the check for a `..` below look through a link, and the
+identity check still sees the directory the OS will create in.  So a `..` after a level that does
+not exist yet is refused: under `All`, as `PathError::DotDotAfterMissing`; in every mode, for an
+output file whose own path ends in such a `..`; and by `is_mount_root`, which answers `true` for a
+path with one.  Until that level is built, the OS has not resolved where the `..` leads, and
+nothing there can be checked.  If the current directory cannot be read at all, or the identity check’s
 stat of `/Volumes`, the path, or its parent fails for any reason but absence, the floor
 **fails closed** and refuses — it gates creation, so an unprovable path is never granted the
 dangerous branch.

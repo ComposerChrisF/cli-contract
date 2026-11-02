@@ -947,7 +947,8 @@ fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
 /// **On Windows the floor checks no list.**  The mount roots there are drive letters and UNC
 /// shares, which `create_dir` cannot fabricate: creating under an absent drive fails.  The Unix
 /// list would only refuse ordinary folders, such as `C:\media\photos`.  So this is `false` for
-/// every path it can resolve there; an absent drive or share root is refused by `All`'s chain walk
+/// every path it can resolve there, but a verbatim (`\\?\`) path with a `..` after a level that
+/// does not exist (below); an absent drive or share root is refused by `All`'s chain walk
 /// instead.  A volume mounted into an empty NTFS folder is not detected, just as a Unix mount
 /// outside the listed roots is not.
 ///
@@ -956,27 +957,32 @@ fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
 /// actually walk, not the caller's spelling of them.  Resolution is lexical
 /// ([`std::path::absolute`]) — it touches no filesystem and does *not* resolve symlinks, so the
 /// list is matched against the literal path, including `..`, which after a symbolic link the OS
-/// resolves from the link's target instead; only the identity check for `/Volumes` looks through
-/// a link (any other symlink redirection stays the caller's policy; see the README's symlink
-/// section).  A consequence worth knowing: under `All`, [`ensure_destination`] names the absolute
-/// path of the level it refuses, even when the caller passed a relative one; under `Final`, and for
-/// an output file named for a mount point in every mode, a [`PathError::MountRoot`] names the path
-/// as given.
+/// resolves from the link's target instead; only the identity check for `/Volumes`, and the check
+/// for a `..` after a level that does not exist, look through a link (any other symlink redirection
+/// stays the caller's policy; see the README's symlink section).  A consequence worth knowing:
+/// under `All`, [`ensure_destination`] names the absolute path of the level it refuses, even when
+/// the caller passed a relative one; under `Final`, and for an output file named for a mount point
+/// in every mode, a [`PathError::MountRoot`] names the path as given.
 ///
 /// **Fails closed.**  If the current directory cannot be read (deleted cwd, EACCES) the path
 /// cannot be *proven* safe, so this returns `true` and the creation is refused; so it does when
-/// `/Volumes`, the path, or its parent cannot be stat'd for any reason but `NotFound`.  The floor
-/// gates creation, so the conservative branch is to refuse: a wrongly-refused create is a
-/// nuisance, a fabricated mount point may be a mis-targeted backup.
+/// `/Volumes`, the path, or its parent cannot be stat'd for any reason but `NotFound`.  So it does,
+/// too, for a path with a `..` after a level that does not exist (`new/../x`, with `new` absent;
+/// on Windows, where `..` is resolved first, only a verbatim path keeps one): where that leads is
+/// known only once the level is built, so no check made now can prove it safe, and
+/// [`check_destination`] refuses the same path under `All`.  The floor gates creation, so the
+/// conservative branch is to refuse: a wrongly-refused create is a nuisance, a fabricated mount
+/// point may be a mis-targeted backup.
 #[must_use]
 pub fn is_mount_root(path: &Path) -> bool {
     // An identity probe that could not be made refuses, as an unreadable cwd does.
-    !matches!(mount_root(path), Ok(false))
+    !matches!(mount_root(path), Ok(false)) || !matches!(dotdot_after_missing(path), Ok(false))
 }
 
-/// [`is_mount_root`], with a path it cannot resolve (a deleted current directory, the empty path)
-/// or an identity probe that could not be made kept apart as [`PathError::Undeterminable`], so the
-/// contract functions report that fact rather than claim a mount point.
+/// [`is_mount_root`] without its `..` check, which the contract functions make in their own way,
+/// and with a path it cannot resolve (a deleted current directory, the empty path) or an identity
+/// probe that could not be made kept apart as [`PathError::Undeterminable`], so the contract
+/// functions report that fact rather than claim a mount point.
 fn mount_root(path: &Path) -> Result<bool, PathError> {
     let abs = absolute(path)?;
     Ok(is_mount_root_abs(&abs) || is_volumes_or_a_child_of_it(&abs)?)
@@ -1022,6 +1028,29 @@ fn is_volumes_or_a_child_of_it(path: &Path) -> Result<bool, PathError> {
     for p in [Some(path), path.parent()].into_iter().flatten() {
         if identity(p)? == Some(volumes) {
             return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `path`, made absolute, has a `..` after a level that does not exist: the walk up from
+/// it meets an absent level ending in `..` before one that exists, as [`floor_check_chain`]'s
+/// does (bug-0045).  A path with no `..` is not probed.  Each probe is [`probe_target`]'s, which
+/// follows links, as a create does.
+fn dotdot_after_missing(path: &Path) -> Result<bool, PathError> {
+    let abs = absolute(path)?;
+    if !abs.components().any(|c| c == Component::ParentDir) {
+        return Ok(false);
+    }
+    for p in abs.ancestors() {
+        match probe_target(p)? {
+            Presence::Present(_) => return Ok(false),
+            Presence::Absent
+                if matches!(p.components().next_back(), Some(Component::ParentDir)) =>
+            {
+                return Ok(true);
+            }
+            Presence::Absent => {}
         }
     }
     Ok(false)
@@ -1486,8 +1515,14 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn dotdot_is_normalized_before_the_floor_check() {
-        // /Volumes/../etc resolves to /etc, which is not a mount root.
-        assert!(!is_mount_root(Path::new("/Volumes/../etc")));
+        // /Volumes/../etc resolves to /etc, which is not a mount root.  Where `/Volumes` is
+        // absent, as on Linux, that `..` follows a level that does not exist, and the floor
+        // refuses it (bug-0045).
+        assert!(!is_mount_root_abs(Path::new("/Volumes/../etc")));
+        assert_eq!(
+            is_mount_root(Path::new("/Volumes/../etc")),
+            cfg!(not(target_os = "macos"))
+        );
     }
 
     // --- the floor compares what a path means from the current directory, not its text ------
