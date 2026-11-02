@@ -16,6 +16,9 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   all the same: a narrowing that only refuses, made to close a safety hole, ships as a patch so
   that every dependent on `"0.6"` picks it up (bug-0042).
 
+- [ ] **0.6.2 fixes bug-0045**: `is_mount_root` fails closed on a `..` after a level that does
+  not exist, as the four contract functions have since 0.6.1.
+
 - [ ] **Set the semver baseline**, so every later release is checked against 0.6.0.  Nothing
   checks it yet: no CI job, and `cargo-semver-checks` is not installed here.
 
