@@ -1,0 +1,40 @@
+# Plan: One Shared Leak Gate, Which Also Reads Commit and Tag Messages
+
+## Problem
+
+`scripts/leak-gate` guards only this repository’s files, and only some of what a public repository publishes.  The maintainer has ruled (1-Nov-2026) that it becomes **one shared tool**, not a copy per repository, since a second repository is about to go public.  Four gaps come with it:
+
+1. **Commit messages are not read.**  The gate scans the index: tracked files’ contents and paths.  There is no `commit-msg` hook (`.githooks/` holds only `pre-commit`), and CI runs the same index scan.  So a private name that appears only in a subject passes the hook and CI alike.  On 1-Nov-2026, four commits (`8441d45`, `96274f3`, `281fa4d`, `8fa4883`) reached the public `main` with one in each subject.  Annotated tag messages are published too and are not read either; cargo-release writes them, and today they say only `chore: Release cli-contract version <version>`.  The header’s first line, “refuse any private reference in what this repository would publish”, claims more than the gate does.
+2. **The private list is chosen per machine, not per repository.**  The gate reads `$LEAK_GATE_PATTERNS`, else `~/.config/leak-gate/patterns.txt`.  `.githooks/pre-commit` sets no variable, and neither does an automated clone.  So a second repository is checked against this one’s list: what is private here but is that repository’s own subject is refused in every commit, and what that repository must protect is not on the list.
+3. **A home path assembled at build time is not seen.**  The generic layer looks for a literal home path (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>`) and for paths into the home directory’s `.claude` folder.  A path built from the home directory and a folder on the maintainer’s drive, such as `concat!(env!("HOME"), "/<folder>/…")` or `$HOME/<folder>/…`, has neither, so only the private list can catch it.  There a leading `/` narrows a whole-word pattern without saying so: `/<folder>` matches the `concat!` form but misses `$HOME/<folder>`.  The maintainer has ruled that paths on his drive never go public.
+4. **No rule refuses a kind of file.**  A list of names cannot recognise content.  A repository that must not publish certain file types outside a cleared folder, such as copyrighted music scores beside its own test fixtures, has no way to say so.
+
+## Proposed Change
+
+A shared `leak-gate`, in a repository of its own, which each public repository runs at a pinned revision.  Where that repository lives is the maintainer’s call (below).  It keeps today’s two layers, generic (committed, run in CI and the hook) and private (never committed, run on the maintainer’s machine), and adds:
+
+- **`leak-gate message <file>`**, both layers over one commit message, for a `commit-msg` hook beside `pre-commit`.  A hook sees only commits made through it, so this covers the maintainer and every clone set up with `core.hooksPath`.  An automated committer that runs `.githooks/pre-commit` itself, as the nightly review has since 1-Nov-2026, must run `commit-msg` too; its owner is told when this step lands.
+- **`leak-gate range <A..B>`**, the generic layer over every commit message and annotated tag message in a range, for CI.  CI checks what a push adds (`before..after`, or the default branch to the branch tip for a new branch), so the four commits above never fail it, and no baseline file is needed.  The private layer cannot run there, so a private name in a message is caught only by the hook.
+- **IDs in a message follow the same rule as in a file.**  A subject normally cites a bug or plan ID, and that is fine whenever the ID is one this history can resolve: four digits, at or above its series’ floor.  An ID below the floor points into a history the reader does not have, in a message as anywhere.
+- **A per-repository list, named in a committed file.**  The repository commits `.leak-gate.toml`, naming its list by a key (`private-list = "<key>"`), and the gate reads `~/.config/leak-gate/lists/<key>.txt`.  The key is committed and the list never is, so a hook and an automated clone on the maintainer’s machine both find the same list, and CI, which has none, skips that layer as today.  `$LEAK_GATE_PATTERNS` still overrides.  `--require-private` makes a named list that is absent exit 4.
+- **A home-relative path in the generic layer.**  Refuse `~/`, `$HOME/`, `${HOME}/`, and `env!("HOME")` followed by a path, when the path’s first folder is not a dot-folder: `~/.config/…` and `~/.cargo/…` name tool state and pass, and `~/<folder>/…` names the maintainer’s own files and is refused.  This puts the drive rule in CI, where the private list never runs.  Whether the dot-folder line is the right one is to be checked against the portfolio’s public files before it lands.
+- **A per-repository file-type rule**, also in `.leak-gate.toml` and the generic layer: `refuse-extensions = [...]` outside `allow-under = [...]`.  It is off unless a repository sets it, so it changes nothing here.
+- **The header claims only what is scanned**, and the private-list section says that a leading `/` narrows a whole-word pattern.
+
+## Implementation Notes
+
+- **Order, each step its own commit:**
+  1. Move the script and `tests/leak_gate.rs` into the shared repository as they are, so the move can be reviewed as a move.
+  2. Switch this repository’s CI and hook to the pinned copy.  Delete `scripts/leak-gate` and `tests/leak_gate.rs` here, after graduating anything in the header that is about this repository alone.
+  3. The per-repository list, which the second repository needs before its first public commit.
+  4. `message` and `range`, with the `commit-msg` hook and the CI step.
+  5. The home-relative rule.
+  6. The file-type rule.
+- **Pinning:** CI fetches the gate at a fixed commit and checks its SHA-256 before running it, so a change to the shared tool reaches a repository only when that repository moves its pin.  The hook runs the copy on `PATH`, which may be newer than the pin; CI is the contract.
+- **The hook:** `.githooks/commit-msg` runs `leak-gate message "$1"`.  A message refused there can be fixed with `git commit --amend` before it is pushed; a message refused in CI has been pushed, and fixing it means rewriting a branch, which is why the hook comes first.
+- **Tag messages** reach CI as part of the push that carries the tag.  cargo-release writes its default message unless `release.toml` sets `tag-message`, which this repository’s does not, so a private name could enter only through that setting.
+- **Exit codes stay as they are**: 0 clean, 1 the gate failed, 2 usage, 3 findings, 4 `--require-private` with no list.
+
+## Why Not a Workaround
+
+A copy per repository is what the ruling ruled out: two copies drift, and a fix made in one (such as this plan’s) never reaches the other.  A rule in the private list cannot replace the generic home-path rule, because the list never reaches CI.  And telling each committer to check their own subjects is the arrangement that let the four commits through.
