@@ -20,6 +20,10 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   level that does not exist, as the four contract functions have since 0.6.1.  It waits on the
   maintainer.
 
+- [ ] **Fix bug-0046 in 0.6.3**, after 0.6.2 is published: `is_mount_root` refuses every
+  dangling link, as the four contract functions do, since `mkdir("link/")` creates the link’s
+  target.  Ruled by the maintainer (2-Nov-2026).
+
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
   tested against both.  A table test over both, or one walk they share.

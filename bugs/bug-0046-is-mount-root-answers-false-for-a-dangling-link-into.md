@@ -2,7 +2,7 @@
 
 Filed by the review of the bug-0045 fix on 2-Nov-2026.
 
-**Spec question: Chris to rule.**  The contract does not settle that this is a defect: its basis is `inferred` (the evidence, and what follows if either side is right, are below).  It is not fixed until Chris rules.  To have it fixed as stated, he sets the basis below to `ruled`, with why; if the code is the right side, he sets it to `doc-drift`, and the fix is to the text alone.
+**Ruled by Chris, 2-Nov-2026 (3:15pm):** refuse every dangling link.  He answered ask `row:App/Rust/cli-contract/0027` “A: Refuse every dangling link, in 0.6.3”, against “B: refuse it only when the target is a mount root” and “C: document it”.  The basis below is now `ruled`, and the fix is to the code: `is_mount_root` answers `true` for a path that is a link to nothing, as the four contract functions already refuse one (`DanglingSymlink`), and ships as a patch, 0.6.3.
 
 It was there before 0.6.1, and the fix for bug-0045 does not touch it: that fix is about a `..` after a level that does not exist, and this path has none.  plan-0015 (the floor’s three-state answer in public) and plan-0017 (a three-state symlink-facts primitive) do not cover it either.
 
@@ -20,7 +20,7 @@ Provenance `ai`: raised by the reviewer of the bug-0045 fix.  Reproduced by hand
 
 **Severity:** contract
 
-**Basis:** `inferred`.  The contract is split.
+**Basis:** `ruled` by Chris (above): a path the floor cannot prove safe is refused, and a dangling link is one, since a create through it may make its target.  As filed, `inferred`.  The contract is split.
 - **For refusing:** `is_mount_root`’s rustdoc says it “Fails closed”, and that the floor “must examine the components the create will actually walk”; the README says “an unprovable path is never granted the dangerous branch”.  A create through `link/` walks to `/Volumes/X`.
 - **For the code as it is:** the same rustdoc limits its look through links to the identity check for `/Volumes` (“any other symlink redirection stays the caller’s policy; see the README’s symlink section”), and the identity probe’s rustdoc counts an absent path as proof that it is not `/Volumes` or a child of it.
 
