@@ -1,0 +1,29 @@
+diff --git a/tests/leak_gate.rs b/tests/leak_gate.rs
+index 1ea3999..4cf7786 100644
+--- a/tests/leak_gate.rs
++++ b/tests/leak_gate.rs
+@@ -482,3 +482,24 @@ fn leak_gate_help_prints_its_header() {
+     assert_eq!(out.status.code(), Some(0), "{}", show(&out));
+     assert!(text.contains("Exit: 0 clean;"), "{text}");
+ }
++
++/// `bugs/`, `plans/`, and `TODO.md` are published, and a roster address with a `/` in it spells
++/// folders on the maintainer's drive, a form the generic layer's home-path rule does not match.
++/// This reads this repository's own tracked text, not a scratch repository.
++#[test]
++fn published_text_holds_no_roster_address_with_a_drive_path() {
++    let fx = Fixture::new(&[]);
++    let out = fx
++        .command("git", Path::new(env!("CARGO_MANIFEST_DIR")))
++        .args(["grep", "--no-color", "-n", "-E"])
++        .arg("(^|[^[:alnum:]_])row:[^[:space:]`]*/")
++        .args(["--", "bugs", "plans", "TODO.md"])
++        .output()
++        .unwrap();
++    assert_eq!(
++        out.status.code(),
++        Some(1),
++        "published text holds a roster address that spells a path on the maintainer's drive: {}",
++        show(&out)
++    );
++}
