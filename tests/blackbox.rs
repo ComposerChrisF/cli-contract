@@ -161,8 +161,9 @@ fn the_floor_sees_a_mount_root_reached_through_dotdot() {
     }
 }
 
-/// README: "only the identity check for `/Volumes` and the check for a `..` below look through a
-/// link", and rustdoc: "Each probe follows links, as a create does".  A create of `L/../Volumes/X`, with `L` a link to `/usr`,
+/// README: "only the identity check for `/Volumes`, the check for a `..` below, and
+/// `is_mount_root`’s check for a dangling link look through a link", and rustdoc: "Each probe
+/// follows links, as a create does".  A create of `L/../Volumes/X`, with `L` a link to `/usr`,
 /// makes `/Volumes/X`: the kernel resolves `L` before `..`.
 #[cfg(target_os = "macos")]
 #[test]
@@ -245,8 +246,36 @@ fn is_mount_root_refuses_a_dotdot_after_a_missing_level_that_hides_volumes() {
     );
 }
 
-/// README, floor section: "only the identity check for `/Volumes` and the check for a `..` below
-/// look through a link".  The same spelling gets a different answer by what stands behind the link,
+/// bug-0046.  README: "`is_mount_root` answers `true`, too, for a dangling link at the path or
+/// above it, wherever the link points: on macOS `mkdir("link/")` creates the link’s target, which
+/// may be a mount point".  So a link into an absent `/Volumes/<name>`, spelled with or without the
+/// separator, and a link to any other absent path; a link to a directory is judged as before.
+#[cfg(unix)]
+#[test]
+fn is_mount_root_refuses_every_dangling_link() {
+    let d = tempfile::tempdir().unwrap();
+    let real = d.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let to_real = d.path().join("to_real");
+    std::os::unix::fs::symlink(&real, &to_real).unwrap();
+    let to_volumes = d.path().join("to_volumes");
+    std::os::unix::fs::symlink("/Volumes/cli_contract_bb_absent", &to_volumes).unwrap();
+    let dangling = d.path().join("dangling");
+    std::os::unix::fs::symlink(d.path().join("absent"), &dangling).unwrap();
+
+    assert!(!is_mount_root(&to_real), "a link to a directory");
+    assert!(
+        !is_mount_root(&to_real.join("sub")),
+        "below a link to a directory"
+    );
+    let slashed = PathBuf::from(format!("{}/", to_volumes.display()));
+    for p in [to_volumes, slashed, dangling.clone(), dangling.join("sub")] {
+        assert!(is_mount_root(&p), "is_mount_root({}) = false", p.display());
+    }
+}
+
+/// README, floor section: "only the identity check for `/Volumes`, the check for a `..` below, and
+/// `is_mount_root`’s check for a dangling link look through a link".  The same spelling gets a different answer by what stands behind the link,
 /// so the `..` check does look through one, and the symlink section must not say the floor does so
 /// "only to recognize `/Volumes`".
 #[cfg(unix)]

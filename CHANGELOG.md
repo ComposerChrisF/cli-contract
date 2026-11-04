@@ -4,6 +4,12 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.3] - 2026-11-14
+
+### Fixed
+
+- **`is_mount_root` answers `true` for a dangling link, at the path or above it**, which the four contract functions already refuse as `PathError::DanglingSymlink`.  On macOS, `mkdir("link/")` and `std::fs::create_dir_all("link/")` create a dangling link’s target, so with `link` pointing into an absent `/Volumes/X`, a caller that gated its own create on `is_mount_root` could, run as root, make a mount point (bug-0046).  The maintainer ruled that every dangling link is refused, wherever it points, so a caller that reports the refusal may call a link to an ordinary folder a mount root.
+
 ## [0.6.2] - 2026-11-02
 
 ### Fixed

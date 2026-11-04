@@ -143,14 +143,17 @@ means from the current directory, not its text.  (So `media/uploads` in a projec
 directory, while a bare `Backup` with a cwd of `/Volumes` is refused.)  Resolution is lexical: it
 touches no filesystem and does not resolve symlinks, so the list is matched against the literal
 path, including `..`, which after a symbolic link the OS resolves from the link’s target instead;
-only the identity check for `/Volumes` and the check for a `..` below look through a link, and the
-identity check still sees the directory the OS will create in.  So a `..` after a level that does
-not exist yet is refused: under `All`, as `PathError::DotDotAfterMissing`; in every mode, for an
-output file whose own path ends in such a `..`; and by `is_mount_root`, which answers `true` for a
-path with one.  Until that level is built, the OS has not resolved where the `..` leads, and
-nothing there can be checked.  If the current directory cannot be read at all, or the identity check’s
-stat of `/Volumes`, the path, or its parent fails for any reason but absence, the floor
-**fails closed** and refuses — it gates creation, so an unprovable path is never granted the
+only the identity check for `/Volumes`, the check for a `..` below, and `is_mount_root`’s check for
+a dangling link look through a link, and the identity check still sees the directory the OS will
+create in.  So a `..` after a level that does not exist yet is refused: under `All`, as
+`PathError::DotDotAfterMissing`; in every mode, for an output file whose own path ends in such a
+`..`; and by `is_mount_root`, which answers `true` for a path with one.  Until that level is built,
+the OS has not resolved where the `..` leads, and nothing there can be checked.  `is_mount_root`
+answers `true`, too, for a dangling link at the path or above it, wherever the link points: on macOS
+`mkdir("link/")` creates the link’s target, which may be a mount point.  The contract functions
+refuse such a path as `DanglingSymlink`.  If the current directory cannot be read at all, or the
+identity check’s stat of `/Volumes`, the path, or its parent fails for any reason but absence, the
+floor **fails closed** and refuses — it gates creation, so an unprovable path is never granted the
 dangerous branch.
 
 ### The marker guard
@@ -200,9 +203,9 @@ link’s target: a link spelled that way is still the link, so `reject_symlink("
 and a file spelled `file/` is checked as `file`.
 
 But a symlinked destination can silently redirect output off the path you named — the mount-root
-floor looks through a link only for the identity check for `/Volumes` and the check for a `..`
-after a level that does not exist — so the crate hands the decision to the caller instead of
-guessing.
+floor looks through a link only for the identity check for `/Volumes`, the check for a `..` after a
+level that does not exist, and `is_mount_root`’s check for a dangling link — so the crate hands the
+decision to the caller instead of guessing.
 Everything composes from primitives; there is no fixed policy enum:
 
 - **Follow** (default) — call the functions; a link to a directory is used.

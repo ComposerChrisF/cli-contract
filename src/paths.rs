@@ -948,8 +948,8 @@ fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
 /// shares, which `create_dir` cannot fabricate: creating under an absent drive fails.  The Unix
 /// list would only refuse ordinary folders, such as `C:\media\photos`.  So this is `false` for
 /// every path it can resolve there, but a verbatim (`\\?\`) path with a `..` after a level that
-/// does not exist (below); an absent drive or share root is refused by `All`'s chain walk
-/// instead.  A volume mounted into an empty NTFS folder is not detected, just as a Unix mount
+/// does not exist, and a dangling link (both below); an absent drive or share root is refused by
+/// `All`'s chain walk instead.  A volume mounted into an empty NTFS folder is not detected, just as a Unix mount
 /// outside the listed roots is not.
 ///
 /// **A relative path is resolved against the current directory first**, because that is what the
@@ -957,9 +957,10 @@ fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
 /// actually walk, not the caller's spelling of them.  Resolution is lexical
 /// ([`std::path::absolute`]) — it touches no filesystem and does *not* resolve symlinks, so the
 /// list is matched against the literal path, including `..`, which after a symbolic link the OS
-/// resolves from the link's target instead; only the identity check for `/Volumes`, and the check
-/// for a `..` after a level that does not exist, look through a link (any other symlink redirection
-/// stays the caller's policy; see the README's symlink section).  A consequence worth knowing:
+/// resolves from the link's target instead; only the identity check for `/Volumes`, the check for
+/// a `..` after a level that does not exist, and the check for a dangling link look through a
+/// link (any other symlink redirection stays the caller's policy; see the README's symlink
+/// section).  A consequence worth knowing:
 /// under `All`, [`ensure_destination`] names the absolute path of the level it refuses, even when
 /// the caller passed a relative one; under `Final`, and for an output file named for a mount point
 /// in every mode, a [`PathError::MountRoot`] names the path as given.
@@ -970,19 +971,25 @@ fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
 /// too, for a path with a `..` after a level that does not exist (`new/../x`, with `new` absent;
 /// on Windows, where `..` is resolved first, only a verbatim path keeps one): where that leads is
 /// known only once the level is built, so no check made now can prove it safe, and
-/// [`check_destination`] refuses the same path under `All`.  The floor gates creation, so the
-/// conservative branch is to refuse: a wrongly-refused create is a nuisance, a fabricated mount
-/// point may be a mis-targeted backup.
+/// [`check_destination`] refuses the same path under `All`.  So it does for a dangling link, at the
+/// path or above it, wherever the link points: on macOS `mkdir("link/")` creates the link's
+/// target, which may be a mount point, and the contract functions refuse the same path as
+/// [`PathError::DanglingSymlink`].  A caller that reports this refusal calls such a link a mount
+/// root, though it may name none.  The floor gates creation, so the conservative branch is to
+/// refuse: a wrongly-refused create is a nuisance, a fabricated mount point may be a mis-targeted
+/// backup.
 #[must_use]
 pub fn is_mount_root(path: &Path) -> bool {
     // An identity probe that could not be made refuses, as an unreadable cwd does.
-    !matches!(mount_root(path), Ok(false)) || !matches!(dotdot_after_missing(path), Ok(false))
+    !matches!(mount_root(path), Ok(false))
+        || !matches!(dotdot_after_missing(path), Ok(false))
+        || matches!(probe_resolved(path), Err(PathError::DanglingSymlink(_)))
 }
 
-/// [`is_mount_root`] without its `..` check, which the contract functions make in their own way,
-/// and with a path it cannot resolve (a deleted current directory, the empty path) or an identity
-/// probe that could not be made kept apart as [`PathError::Undeterminable`], so the contract
-/// functions report that fact rather than claim a mount point.
+/// [`is_mount_root`] without its `..` and dangling-link checks, which the contract functions make
+/// in their own way, and with a path it cannot resolve (a deleted current directory, the empty
+/// path) or an identity probe that could not be made kept apart as [`PathError::Undeterminable`],
+/// so the contract functions report that fact rather than claim a mount point.
 fn mount_root(path: &Path) -> Result<bool, PathError> {
     let abs = absolute(path)?;
     Ok(is_mount_root_abs(&abs) || is_volumes_or_a_child_of_it(&abs)?)
