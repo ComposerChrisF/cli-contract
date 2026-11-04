@@ -161,8 +161,8 @@ fn the_floor_sees_a_mount_root_reached_through_dotdot() {
     }
 }
 
-/// README: "only the identity check for `/Volumes` looks through a link", and rustdoc: "Each probe
-/// follows links, as a create does".  A create of `L/../Volumes/X`, with `L` a link to `/usr`,
+/// README: "only the identity check for `/Volumes` and the check for a `..` below look through a
+/// link", and rustdoc: "Each probe follows links, as a create does".  A create of `L/../Volumes/X`, with `L` a link to `/usr`,
 /// makes `/Volumes/X`: the kernel resolves `L` before `..`.
 #[cfg(target_os = "macos")]
 #[test]
@@ -199,7 +199,7 @@ fn the_floor_sees_volumes_through_a_link_then_dotdot() {
 }
 
 /// bug-0041.  README: the identity check "still sees the directory the OS will create in", and "So
-/// under `All` a `..` after a level that does not exist yet is refused, as
+/// a `..` after a level that does not exist yet is refused: under `All`, as
 /// `PathError::DotDotAfterMissing`".  With `zz` absent, `L/zz/../../Volumes/X` cannot be stat'd,
 /// yet once `L/zz` is built it is `/Volumes/X`.  Only checks run here: a create would try
 /// `/usr/zz`.
@@ -242,6 +242,36 @@ fn is_mount_root_refuses_a_dotdot_after_a_missing_level_that_hides_volumes() {
         "is_mount_root({}) = false: a `..` after a missing level hides /Volumes from the public \
          floor (bug-0041's shape), though check_destination(All) refuses the same path",
         dest.display()
+    );
+}
+
+/// README, floor section: "only the identity check for `/Volumes` and the check for a `..` below
+/// look through a link".  The same spelling gets a different answer by what stands behind the link,
+/// so the `..` check does look through one, and the symlink section must not say the floor does so
+/// "only to recognize `/Volumes`".
+#[cfg(unix)]
+#[test]
+fn the_readme_symlink_section_admits_the_dotdot_check_looks_through_a_link() {
+    let d = tempfile::tempdir().unwrap();
+    let with_sub = d.path().join("with_sub");
+    std::fs::create_dir_all(with_sub.join("sub")).unwrap();
+    let without_sub = d.path().join("without_sub");
+    std::fs::create_dir(&without_sub).unwrap();
+    let link = d.path().join("link");
+    let dest = link.join("sub").join("..").join("x");
+
+    std::os::unix::fs::symlink(&with_sub, &link).unwrap();
+    assert!(!is_mount_root(&dest), "`sub` exists behind the link");
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&without_sub, &link).unwrap();
+    assert!(is_mount_root(&dest), "`sub` is absent behind the link");
+
+    let readme = include_str!("../README.md");
+    let readme = readme.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        !readme.contains("looks through a link only to recognize"),
+        "README's symlink section says the mount-root floor looks through a link only to recognize \
+         `/Volumes`, but the floor's check for a `..` after a missing level looks through one too"
     );
 }
 
@@ -618,6 +648,46 @@ fn the_readme_table_is_the_help_block() {
     for line in exit::HELP_BLOCK.lines().skip(1) {
         assert!(readme.contains(line.trim()), "README lacks: {line}");
     }
+}
+
+/// This file's header: "Every test here cites the sentence it pins."  So a sentence that these two
+/// floor tests quote from the README must be in the README, wherever its lines happen to break.
+#[test]
+fn the_floor_tests_quote_sentences_the_readme_contains() {
+    let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let readme = flat(include_str!("../README.md"));
+    let source = include_str!("blackbox.rs");
+    let mut stale = Vec::new();
+    for name in [
+        "the_floor_sees_volumes_through_a_link_then_dotdot",
+        "all_refuses_a_dotdot_after_a_missing_level_that_hides_volumes",
+    ] {
+        let at = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("{name} is not in this file"));
+        let mut doc: Vec<&str> = source[..at]
+            .lines()
+            .rev()
+            .map(str::trim_start)
+            .skip_while(|l| l.starts_with("#["))
+            .map_while(|l| l.strip_prefix("///"))
+            .collect();
+        doc.reverse();
+        let doc = flat(&doc.join(" "));
+        let Some((_, cited)) = doc.split_once("README:") else {
+            continue;
+        };
+        let cited = cited.split("rustdoc:").next().unwrap_or(cited);
+        for quote in cited.split('"').skip(1).step_by(2) {
+            if !readme.contains(quote) {
+                stale.push(format!("{name}: {quote}"));
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "test comments quote README sentences the README no longer contains: {stale:#?}"
+    );
 }
 
 // --- BrokenPipe, in a child process ----------------------------------------------------------

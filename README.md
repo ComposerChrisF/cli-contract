@@ -200,8 +200,9 @@ link’s target: a link spelled that way is still the link, so `reject_symlink("
 and a file spelled `file/` is checked as `file`.
 
 But a symlinked destination can silently redirect output off the path you named — the mount-root
-floor looks through a link only to recognize `/Volumes` — so the crate hands the decision to the
-caller instead of guessing.
+floor looks through a link only for the identity check for `/Volumes` and the check for a `..`
+after a level that does not exist — so the crate hands the decision to the caller instead of
+guessing.
 Everything composes from primitives; there is no fixed policy enum:
 
 - **Follow** (default) — call the functions; a link to a directory is used.
