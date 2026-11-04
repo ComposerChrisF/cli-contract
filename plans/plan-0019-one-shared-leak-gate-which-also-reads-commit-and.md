@@ -24,16 +24,16 @@ A shared `leak-gate`, in a repository of its own, which each public repository r
 ## Implementation Notes
 
 - **Order, each step its own commit:**
-  1. Move the script and `tests/leak_gate.rs` into the shared repository as they are, so the move can be reviewed as a move.
+  1. Move the script and `tests/leak_gate.rs` into the shared repository as they are, so the move can be reviewed as a move.  **Landed 2-Nov-2026:** the maintainer chose a new public repository, `ComposerChrisF/leak-gate`, and its first commit holds both files byte for byte.  The repository is not yet published, so steps 2 and later wait on it.
   2. Switch this repository’s CI and hook to the pinned copy.  Delete `scripts/leak-gate` and `tests/leak_gate.rs` here, after graduating anything in the header that is about this repository alone.
-  3. The per-repository list, which the second repository needs before its first public commit.
+  3. The per-repository list, which the second repository needs before its first public commit.  **Landed 3-Nov-2026** in leak-gate 0.2.0, as proposed, with `--generic-only` for CI.  Its settings are a small, fixed part of TOML, read from the index; anything else in the file is exit 1.  A list’s trailing carriage return is dropped.
   4. `message` and `range`, with the `commit-msg` hook and the CI step.
   5. The home-relative rule.
   6. The file-type rule.
 - **Pinning:** CI fetches the gate at a fixed commit and checks its SHA-256 before running it, so a change to the shared tool reaches a repository only when that repository moves its pin.  The hook runs the copy on `PATH`, which may be newer than the pin; CI is the contract.
 - **The hook:** `.githooks/commit-msg` runs `leak-gate message "$1"`.  A message refused there can be fixed with `git commit --amend` before it is pushed; a message refused in CI has been pushed, and fixing it means rewriting a branch, which is why the hook comes first.
 - **Tag messages** reach CI as part of the push that carries the tag.  cargo-release writes its default message unless `release.toml` sets `tag-message`, which this repository’s does not, so a private name could enter only through that setting.
-- **Exit codes stay as they are**: 0 clean, 1 the gate failed, 2 usage, 3 findings, 4 `--require-private` with no list.
+- **Exit codes keep their meanings**: 0 clean, 1 the gate failed, 2 usage, 3 findings, 4 no private patterns.  Exit 4 gains one case, a list the repository names that is absent or empty (above), beside `--require-private` with no list.
 
 ## Why Not a Workaround
 
