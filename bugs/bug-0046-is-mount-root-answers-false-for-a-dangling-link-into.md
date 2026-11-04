@@ -2,7 +2,7 @@
 
 Filed by the review of the bug-0045 fix on 2-Nov-2026.
 
-**Ruled by Chris, 2-Nov-2026 (3:15pm):** refuse every dangling link.  He answered ask `row:App/Rust/cli-contract/0027` “A: Refuse every dangling link, in 0.6.3”, against “B: refuse it only when the target is a mount root” and “C: document it”.  The basis below is now `ruled`, and the fix is to the code: `is_mount_root` answers `true` for a path that is a link to nothing, as the four contract functions already refuse one (`DanglingSymlink`), and ships as a patch, 0.6.3.
+**Ruled by Chris, 2-Nov-2026 (3:15pm):** refuse every dangling link.  He answered “A: Refuse every dangling link, in 0.6.3”, against “B: refuse it only when the target is a mount root” and “C: document it”.  The basis below is now `ruled`, and the fix is to the code: `is_mount_root` answers `true` for a path that is a link to nothing, as the four contract functions already refuse one (`DanglingSymlink`), and ships as a patch, 0.6.3.
 
 It was there before 0.6.1, and the fix for bug-0045 does not touch it: that fix is about a `..` after a level that does not exist, and this path has none.  plan-0015 (the floor’s three-state answer in public) and plan-0017 (a three-state symlink-facts primitive) do not cover it either.
 
