@@ -1,0 +1,63 @@
+diff --git a/tests/changelog_dates.rs b/tests/changelog_dates.rs
+new file mode 100644
+index 0000000..04cb963
+--- /dev/null
++++ b/tests/changelog_dates.rs
+@@ -0,0 +1,57 @@
++//! `CHANGELOG.md` against the release record in `TODO.md`.
++//!
++//! `TODO.md` records the day each release reached crates.io, as a ticked line of the form
++//! `- [x] **0.1.0 is on crates.io** (1-Jan-2026), ...`.  A changelog entry carries that same day.
++
++use std::fs;
++use std::path::Path;
++
++/// `D-MMM-YYYY` as `YYYY-MM-DD`.
++fn iso(date: &str) -> String {
++    const MONTHS: [&str; 12] = [
++        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
++    ];
++    let parts: Vec<&str> = date.split('-').collect();
++    let [day, month, year] = parts[..] else {
++        panic!("a release date in TODO.md is not D-MMM-YYYY: {date:?}");
++    };
++    let day: u32 = day
++        .parse()
++        .unwrap_or_else(|_| panic!("a release date in TODO.md is not D-MMM-YYYY: {date:?}"));
++    let month = MONTHS
++        .iter()
++        .position(|m| *m == month)
++        .unwrap_or_else(|| panic!("a release date in TODO.md is not D-MMM-YYYY: {date:?}"));
++    format!("{year}-{:02}-{day:02}", month + 1)
++}
++
++#[test]
++fn changelog_dates_each_release_the_day_it_was_published() {
++    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
++    let todo = fs::read_to_string(root.join("TODO.md")).unwrap();
++    let changelog = fs::read_to_string(root.join("CHANGELOG.md")).unwrap();
++
++    let mut wrong = Vec::new();
++    for line in todo.lines() {
++        let Some(rest) = line.strip_prefix("- [x] **") else {
++            continue;
++        };
++        let Some((version, rest)) = rest.split_once(" is on crates.io** (") else {
++            continue;
++        };
++        let date = rest.split(')').next().unwrap();
++        let want = format!("## [{version}] - {}", iso(date));
++        if !changelog.lines().any(|l| l == want) {
++            let prefix = format!("## [{version}]");
++            let found = changelog.lines().find(|l| l.starts_with(&prefix));
++            wrong.push(format!(
++                "TODO.md has {version} on crates.io on {date}, so CHANGELOG.md should read \
++                 `{want}`, but it reads {found:?}"
++            ));
++        }
++    }
++    assert!(
++        wrong.is_empty(),
++        "a CHANGELOG.md entry does not carry its release's publication day: {wrong:#?}"
++    );
++}
