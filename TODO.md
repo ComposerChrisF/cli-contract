@@ -16,11 +16,11 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   all the same: a narrowing that only refuses, made to close a safety hole, ships as a patch so
   that every dependent on `"0.6"` picks it up (bug-0042).
 
-- [ ] **Publish 0.6.2**, which fixes bug-0045: `is_mount_root` fails closed on a `..` after a
-  level that does not exist, as the four contract functions have since 0.6.1.  It waits on the
-  maintainer.
+- [x] **0.6.2 is on crates.io** (4-Nov-2026), tagged `cli-contract-v0.6.2`.  It fixes bug-0045:
+  `is_mount_root` fails closed on a `..` after a level that does not exist, as the four contract
+  functions have since 0.6.1.
 
-- [ ] **Fix bug-0046 in 0.6.3**, after 0.6.2 is published: `is_mount_root` refuses every
+- [ ] **Fix bug-0046 in 0.6.3**, now that 0.6.2 is published: `is_mount_root` refuses every
   dangling link, as the four contract functions do, since `mkdir("link/")` creates the link’s
   target.  Ruled by the maintainer (2-Nov-2026).
 
