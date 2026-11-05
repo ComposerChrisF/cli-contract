@@ -1,0 +1,40 @@
+diff --git a/tests/todo_open_work.rs b/tests/todo_open_work.rs
+new file mode 100644
+index 0000000..85b380b
+--- /dev/null
++++ b/tests/todo_open_work.rs
+@@ -0,0 +1,34 @@
++//! `TODO.md` against the plan and bug files it says it orders.
++
++use std::path::Path;
++
++/// TODO.md: "The order of open work."  So each plan under `plans/` and each report under `bugs/`,
++/// all of them open until the commit that closes them deletes the file, is named somewhere in it.
++/// A passing mention counts; this asks only whether a reader of the list can find the work at all.
++#[test]
++fn todo_names_every_open_plan_and_bug() {
++    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
++    let todo = std::fs::read_to_string(root.join("TODO.md")).expect("TODO.md is readable");
++    let mut unlisted = Vec::new();
++    for (dir, prefix) in [("plans", "plan-"), ("bugs", "bug-")] {
++        for entry in std::fs::read_dir(root.join(dir)).expect("the directory is readable") {
++            let name = entry.expect("the entry is readable").file_name();
++            let name = name.to_string_lossy();
++            let Some(rest) = name.strip_prefix(prefix) else {
++                continue;
++            };
++            if !name.ends_with(".md") {
++                continue;
++            }
++            let id = format!("{prefix}{}", &rest[..4]);
++            if !todo.contains(&id) {
++                unlisted.push(id);
++            }
++        }
++    }
++    unlisted.sort();
++    assert!(
++        unlisted.is_empty(),
++        "TODO.md, \"the order of open work\", omits open work filed in plans/ and bugs/: {unlisted:?}"
++    );
++}
