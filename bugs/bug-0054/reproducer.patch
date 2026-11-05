@@ -1,0 +1,32 @@
+diff --git a/tests/blackbox.rs b/tests/blackbox.rs
+index 3645f48..16ea159 100644
+--- a/tests/blackbox.rs
++++ b/tests/blackbox.rs
+@@ -690,6 +690,27 @@ fn the_floor_tests_quote_sentences_the_readme_contains() {
+     );
+ }
+ 
++/// CHANGELOG: "The format is based on [Keep a Changelog]", whose version headings are reference
++/// links.  A heading `## [x.y.z]` with no `[x.y.z]:` definition renders as literal brackets.
++#[test]
++fn every_changelog_version_heading_has_a_link_definition() {
++    let changelog = include_str!("../CHANGELOG.md");
++    let undefined: Vec<&str> = changelog
++        .lines()
++        .filter_map(|l| l.strip_prefix("## ["))
++        .filter_map(|l| l.split_once(']'))
++        .map(|(version, _)| version)
++        .filter(|version| {
++            let definition = format!("[{version}]: ");
++            !changelog.lines().any(|l| l.starts_with(&definition))
++        })
++        .collect();
++    assert!(
++        undefined.is_empty(),
++        "CHANGELOG version headings use reference-link syntax with no definition: {undefined:?}"
++    );
++}
++
+ // --- BrokenPipe, in a child process ----------------------------------------------------------
+ //
+ // README: with `ignore_broken_pipe`, "a closed pipe just stops output" and "the work runs to
