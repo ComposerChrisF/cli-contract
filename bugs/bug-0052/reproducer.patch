@@ -1,0 +1,44 @@
+diff --git a/tests/blackbox.rs b/tests/blackbox.rs
+index 3645f48..cc5a9e3 100644
+--- a/tests/blackbox.rs
++++ b/tests/blackbox.rs
+@@ -690,6 +690,39 @@ fn the_floor_tests_quote_sentences_the_readme_contains() {
+     );
+ }
+ 
++/// This file's header: "Every test here cites the sentence it pins."  So what the comment over the
++/// floor section quotes from the README must be in the README, wherever its lines happen to break.
++#[test]
++fn the_floor_section_comment_quotes_what_the_readme_says() {
++    let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
++    let readme = flat(include_str!("../README.md"));
++    let source = include_str!("blackbox.rs");
++    let at = source
++        .find("// --- the mount-root floor")
++        .expect("the floor section's comment is in this file");
++    let comment: Vec<&str> = source[at..]
++        .lines()
++        .skip(1)
++        .map_while(|l| l.strip_prefix("//"))
++        .collect();
++    let comment = flat(&comment.join(" "));
++    let (_, cited) = comment
++        .split_once("README:")
++        .expect("the floor section's comment cites the README");
++    let cited = cited.split("rustdoc of").next().unwrap_or(cited);
++    let stale: Vec<&str> = cited
++        .split('"')
++        .skip(1)
++        .step_by(2)
++        .filter(|quote| !readme.contains(quote))
++        .collect();
++    assert!(
++        stale.is_empty(),
++        "the floor section's comment quotes words the README does not contain, so it misstates \
++         the sentence it cites: {stale:#?}"
++    );
++}
++
+ // --- BrokenPipe, in a child process ----------------------------------------------------------
+ //
+ // README: with `ignore_broken_pipe`, "a closed pipe just stops output" and "the work runs to
