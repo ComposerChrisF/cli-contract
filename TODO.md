@@ -27,6 +27,9 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 - [x] **0.6.4 is on crates.io** (15-Nov-2026), tagged `cli-contract-v0.6.4`.  It makes the
   three-state probe public, as `presence` and `presence_resolved` (plan-0020, part 1).
 
+- [ ] **Publish 0.6.5**, which adds `exit::ExitTable`, a tool’s exit-code table built from the
+  codes it returns (plan-0020, part 3).  It waits on the maintainer.
+
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
   tested against both.  A table test over both, or one walk they share.
@@ -77,7 +80,7 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   `Path::exists` and name the fix; `write_file`, which never leaves a half-written file;
   `ExitTable`, so a tool’s own codes are documented from one declaration; and a `testing` feature
   for the closed-stream, dry-run, and `--help` tests.  Additive.  Part 1, `presence`, landed in
-  0.6.4; then part 3, then parts 2 and 4.
+  0.6.4, and part 3, `ExitTable`, in 0.6.5; then parts 2 and 4.
 
 - [ ] [plan-0021](plans/plan-0021-could-not-tell-below-a-missing-mount-point.md) — **“could not
   tell” below a missing mount point**: `presence` answers `Absent` for a path on an unmounted

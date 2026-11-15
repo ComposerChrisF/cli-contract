@@ -254,6 +254,28 @@ Constants live in `exit`, and `exit::HELP_BLOCK` is ready to hand to clap’s `a
 every tool documents the table identically.  **Findings never exit 1** — that is what lets a caller
 distinguish “act on the findings” from “retry or debug the tool”.
 
+A tool with something to add under a canonical code (the usage errors it checks itself), codes of
+its own, or a mode with codes of its own builds its table with `exit::ExitTable`, from the same
+constants it returns, so a code is declared once:
+
+```rust,ignore
+const LOCKED: u8 = 5;
+
+let help = ExitTable::canonical()   // renders as HELP_BLOCK
+    .detail(USAGE, "also --fix with --check, which the tool refuses itself")
+    .code(LOCKED, "lock held by another run")
+    .mode("--check", &[(FINDINGS, "drift found"), (TOOL_ERROR, "the check could not run")])
+    .render();                      // a mode's table follows, under "EXIT CODES (--check):"
+let cmd = Command::new("tool").after_long_help(help);
+```
+
+`detail` adds lines under one of the canonical five, which keeps its wording: the usage errors a
+tool checks itself, which it names under 2, or that it never returns a code.  `code` panics on 0 to
+4, whose meanings are the table’s, on a code above 125, where the shell’s own codes are, and on a
+code already in the table.  A mode may list a canonical code to say what it means there, but 1 is
+a tool error and 2 a usage error in every mode.  The table is written from literals and built on
+every run, so the tool’s first test that runs it finds such a mistake.
+
 ## 3.  BrokenPipe — read both cases; the wrong one destroys data
 
 Rust ignores `SIGPIPE`, so writing to a closed pipe (`tool | head`) returns `EPIPE`, which

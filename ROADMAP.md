@@ -23,7 +23,8 @@ roughly by how often a tool would reuse them:
   `discover_config(name)` plus a `--show-config` renderer.
 - **`--help` section builders**: assemble `after_long_help` from standard blocks (the exit-code
   table, a config-discovery block, a suppression block) so `--help` reads uniformly across tools.
-  `exit::HELP_BLOCK` is the first such block.
+  `exit::HELP_BLOCK` is the first such block, and `exit::ExitTable` builds a tool’s own exit-code
+  table.
 - **Findings accumulator → exit 3 + `--json`**: a small type that collects findings and yields exit 3
   (never 1) with schema-stable JSON, so “findings never exit 1” holds structurally.
 - **`--dry-run` convention**: a flag plus a “would do X” reporting helper for mutating tools.

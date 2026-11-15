@@ -4,6 +4,12 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.5] - 2026-11-15
+
+### Added
+
+- **`exit::ExitTable`, a tool’s exit-code table, built from the codes it returns.**  `ExitTable::canonical()` renders as `HELP_BLOCK`.  `.detail(n, text)` adds lines under one of the canonical five, which keeps its wording, for what the code covers in the tool: the usage errors it checks itself, say.  `.code(n, meaning)` adds a code of the tool’s own, and `.mode(name, &[(code, meaning)])` the table of a mode that gives codes meanings of its own, rendered after the main table under `EXIT CODES (<name>):`.  `.render()` is the text for clap’s `after_long_help`, each section sorted by code, the codes aligned on the widest.  `detail` panics on a code above 4; `code` panics on 0 to 4, whose meanings are canonical, on a code above 125, and on a code already in the table; `mode` panics on an empty list of codes, a code above 125, a code listed twice, and a mode name already in the table.  `HELP_BLOCK` is unchanged (plan-0020, part 3).
+
 ## [0.6.4] - 2026-11-14
 
 ### Added
@@ -67,6 +73,7 @@ The first public release.
 
 These affect only users of the unpublished versions before 0.6.0.
 
+[0.6.5]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.5
 [0.6.4]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.4
 [0.6.1]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.1
 [0.6.0]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.0

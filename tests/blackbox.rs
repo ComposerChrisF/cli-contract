@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use cli_contract::exit::ExitTable;
 use cli_contract::{
     check_destination, check_output_file, ensure_destination, exit, prepare_output_file, presence,
     presence_resolved, reject_symlink, require_input_dir, require_input_path, require_marker,
@@ -870,6 +871,157 @@ fn the_floor_tests_quote_sentences_the_readme_contains() {
         stale.is_empty(),
         "test comments quote README sentences the README no longer contains: {stale:#?}"
     );
+}
+
+// --- the exit table ------------------------------------------------------------------------
+
+/// rustdoc of `ExitTable`: "[`canonical`](Self::canonical) renders as exactly [`HELP_BLOCK`]".
+#[test]
+fn the_canonical_table_renders_as_the_help_block() {
+    assert_eq!(ExitTable::canonical().render(), exit::HELP_BLOCK);
+}
+
+/// rustdoc of `render`: "Each section is sorted by code, and the codes are aligned on the widest in
+/// the whole table, so a code of 10 or more moves the canonical rows right too, a column for each
+/// digit past the first."  And `code`, which refuses 0 to 4 and "above 125", takes 5 and 125.
+#[test]
+fn extra_codes_follow_the_canonical_five_sorted_and_aligned() {
+    let help = ExitTable::canonical()
+        .code(125, "c")
+        .code(5, "a")
+        .code(64, "b")
+        .render();
+    let mut want = String::from("EXIT CODES:");
+    for line in exit::HELP_BLOCK.lines().skip(1) {
+        want.push_str(&format!("\n  {line}"));
+    }
+    want.push_str("\n    5  a\n   64  b\n  125  c");
+    assert_eq!(help, want);
+}
+
+/// rustdoc of `mode`: "rendered after the main table under the heading `EXIT CODES (<name>):`", and
+/// it lists "one of the tool's own, which may be listed here alone when only this mode returns it,
+/// or a canonical one"; of `render`: modes come "in the order they were added", each sorted, all
+/// aligned on the widest code in the whole table.
+#[test]
+fn mode_tables_follow_the_main_one_in_the_order_added() {
+    let help = ExitTable::canonical()
+        .mode("status", &[(3, "pending work")])
+        .mode("--check", &[(100, "x"), (1, "y")])
+        .render();
+    assert!(help.starts_with("EXIT CODES:\n    0  success"), "{help}");
+    assert!(
+        help.ends_with(
+            "    4  setup needed (missing config or prerequisite state; not initialized)
+
+EXIT CODES (status):
+    3  pending work
+
+EXIT CODES (--check):
+    1  y
+  100  x"
+        ),
+        "{help}"
+    );
+}
+
+/// rustdoc of `render`: "A meaning that spans lines, in any section, has each later line indented
+/// under the first", under codes as wide as the widest in the table.
+#[test]
+fn a_meaning_that_spans_lines_keeps_them_under_its_first() {
+    let help = ExitTable::canonical()
+        .code(5, "lock held\nby another run")
+        .mode("m", &[(100, "x\ny")])
+        .render();
+    assert!(
+        help.contains("\n    5  lock held\n       by another run\n"),
+        "{help}"
+    );
+    assert!(help.ends_with("\n  100  x\n       y"), "{help}");
+}
+
+/// rustdoc of `detail`: "The canonical meaning stays first and unchanged, and each call adds its
+/// lines below the ones before."
+#[test]
+fn detail_adds_lines_under_a_canonical_meaning() {
+    let help = ExitTable::canonical()
+        .detail(exit::USAGE, "also --a with --b")
+        .detail(exit::USAGE, "also --c\nwithout --d")
+        .detail(exit::SETUP, "never returned")
+        .render();
+    assert!(
+        help.contains(
+            "
+  2  usage error (bad command-line arguments)
+     also --a with --b
+     also --c
+     without --d
+  3  findings"
+        ),
+        "{help}"
+    );
+    assert!(
+        help.ends_with("  4  setup needed (missing config or prerequisite state; not initialized)\n     never returned"),
+        "{help}"
+    );
+}
+
+/// rustdoc of `detail`, `# Panics`: "If `code` is not from 0 to 4."
+#[test]
+#[should_panic(expected = "exit code 5 is not canonical")]
+fn detail_refuses_a_code_of_the_tools_own() {
+    let _ = ExitTable::canonical().code(5, "a").detail(5, "b");
+}
+
+/// rustdoc of `code`, `# Panics`: "If `code` is from 0 to 4, whose meanings are canonical".
+#[test]
+#[should_panic(expected = "exit code 4 is canonical")]
+fn a_canonical_code_cannot_be_added() {
+    let _ = ExitTable::canonical().code(4, "setup");
+}
+
+/// rustdoc of `code`, `# Panics`: "above 125, where the shell's own codes are".
+#[test]
+#[should_panic(expected = "exit code 126 is above 125")]
+fn a_code_above_125_cannot_be_added() {
+    let _ = ExitTable::canonical().code(126, "not executable");
+}
+
+/// rustdoc of `code`, `# Panics`: "or already in the table".
+#[test]
+#[should_panic(expected = "exit code 5 is already in the table")]
+fn a_code_cannot_be_added_twice() {
+    let _ = ExitTable::canonical().code(5, "a").code(5, "b");
+}
+
+/// rustdoc of `mode`, `# Panics`: "a code is above 125".
+#[test]
+#[should_panic(expected = "exit code 126 of mode --check is above 125")]
+fn a_mode_code_above_125_is_refused() {
+    let _ = ExitTable::canonical().mode("--check", &[(125, "ok"), (126, "no")]);
+}
+
+/// rustdoc of `mode`, `# Panics`: "If `codes` is empty".
+#[test]
+#[should_panic(expected = "mode --check lists no codes")]
+fn a_mode_must_list_a_code() {
+    let _ = ExitTable::canonical().mode("--check", &[]);
+}
+
+/// rustdoc of `mode`, `# Panics`: "a code appears twice in `codes`".
+#[test]
+#[should_panic(expected = "exit code 3 is twice in mode --check")]
+fn a_mode_code_cannot_appear_twice() {
+    let _ = ExitTable::canonical().mode("--check", &[(3, "a"), (3, "b")]);
+}
+
+/// rustdoc of `mode`, `# Panics`: "or the table already has a mode of this name".
+#[test]
+#[should_panic(expected = "the table already has mode --check")]
+fn a_mode_cannot_be_added_twice() {
+    let _ = ExitTable::canonical()
+        .mode("--check", &[(3, "a")])
+        .mode("--check", &[(1, "b")]);
 }
 
 // --- BrokenPipe, in a child process ----------------------------------------------------------
