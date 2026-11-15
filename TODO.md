@@ -24,6 +24,9 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   `is_mount_root` refuses every dangling link, as the four contract functions do, since on macOS
   `mkdir("link/")` creates the link’s target.
 
+- [x] **0.6.4 is on crates.io** (15-Nov-2026), tagged `cli-contract-v0.6.4`.  It makes the
+  three-state probe public, as `presence` and `presence_resolved` (plan-0020, part 1).
+
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
   tested against both.  A table test over both, or one walk they share.
