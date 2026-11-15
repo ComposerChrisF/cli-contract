@@ -22,7 +22,6 @@ Four additive parts, each able to land in its own 0.6.x or 0.7.0 release.
 ```rust
 /// What a probe learned: a proven absence, or what was there.  "Could not tell" is the `Err`
 /// of the enclosing `Result`, never a variant, so a caller cannot reach a verdict without it.
-#[non_exhaustive]
 pub enum Presence {
     /// `NotFound`, and nothing else.
     Absent,
@@ -75,7 +74,7 @@ For a tool’s integration tests, run against its built binary (`env!("CARGO_BIN
 
 ## Implementation Notes
 
-- **Part 1 is a visibility change plus docs.**  `Presence` gains `#[non_exhaustive]` before it goes public.  The tests that pin `probe` today pin `presence`, and a mutation check confirms that `Absent` cannot come back for an `EACCES` or an `ELOOP`.
+- **Part 1 is a visibility change plus docs.**  `Presence` stays exhaustive when it goes public (amended 14-Nov-2026; the first draft made it `#[non_exhaustive]`).  Outside this crate, `#[non_exhaustive]` would make the recipe above fail to compile: a match would need a `_` arm, and a wildcard arm on a verdict is the silent default this plan exists to remove, since the caller must guess what an answer it has never seen means.  A new variant would break every match instead, which is the honest signal for a change to what a probe can answer.  The tests that pin `probe` today pin `presence`, and a mutation check confirms that `Absent` cannot come back for an `EACCES` or an `ELOOP`.
 - **Part 2 is the one with design weight.**  The temporary file’s name must not collide (`create_new` on a name with the process id, retried), it must be removed on any error, and the rename must stay in one directory, so it never crosses a filesystem.  Whether to `fsync` the directory after the rename is a durability-against-power-loss question; propose no, and say so in the rustdoc.  On Windows, `rename` over an existing file needs `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`, which `std::fs::rename` already uses.
 - **Part 3 keeps `HELP_BLOCK`** as a constant, its text pinned by the existing test, so nothing that uses it changes.
 - **Part 4 is a public test API**, and semver binds it too.  Keep it small: these four functions, and `#[non_exhaustive]` on any options type.
