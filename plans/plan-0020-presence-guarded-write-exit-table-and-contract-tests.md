@@ -57,12 +57,15 @@ It runs `check_output_file`’s checks on the leaf, with `CreateMode::None`, so 
 
 ```rust
 let table = ExitTable::canonical()
+    .detail(USAGE, "also --fix with --check, which the tool refuses itself")
     .code(5, "lock held by another run")
     .mode("--check", &[(3, "drift found"), (1, "the check could not run")]);
 Command::new("tool").after_long_help(table.render());
 ```
 
-The canonical five lines come from the same constants the code returns, and `HELP_BLOCK` becomes `ExitTable::canonical().render()`, so its text does not change.  `code` refuses a number from 0 to 4 and one above 125.  A tool declares its extra codes next to its table, so the table and the codes are written once.  A code the tool returns without declaring it is not caught here; part 4’s help test catches the codes the tool’s tests see.
+The canonical five lines come from the same constants the code returns, and `ExitTable::canonical().render()` equals `HELP_BLOCK`, so its text does not change.  `code` refuses a number from 0 to 4 and one above 125.  `detail` adds lines under one of the canonical five, so that a tool can say what the code covers in it without changing the code’s wording: the usage errors it checks itself beyond clap’s, which the exit-code convention says a tool names in its table, or that it never returns the code.  A mode may list a canonical code, to say what it means in that mode, but 2 keeps its meaning in every mode, since clap exits 2 before any mode runs: a mode lists 2 only for usage errors of its own.  A tool declares its extra codes next to its table, so the table and the codes are written once.  A code the tool returns without declaring it is not caught here; part 4’s help test catches the codes the tool’s tests see.
+
+_Amended 15-Nov-2026, from part 3’s review:_ `detail` is added, since every tool surveyed that has codes above 4 says more under the canonical codes than their one line, and a table that could not say it could not be adopted.  The sentence on modes and 2 is added, and “`HELP_BLOCK` becomes” is now “equals”, since a `String` cannot be a constant, and a tool that copies `HELP_BLOCK` into a `const` of its own needs it to stay one.
 
 ### 4.  `testing`, shared contract tests (behind a `testing` feature)
 
