@@ -486,7 +486,8 @@ impl fmt::Display for PathError {
 // wants the error itself.
 impl std::error::Error for PathError {}
 
-/// What a probe actually learned about a path.
+/// What a probe actually learned about a path: the answer of [`presence`] and
+/// [`presence_resolved`].
 ///
 /// There is deliberately **no `Unknown` variant**: Unknown is the `Err` of the enclosing
 /// `Result`, so a caller cannot reach a verdict without dealing with it.  That is the whole
@@ -497,12 +498,32 @@ impl std::error::Error for PathError {}
 /// Do not "simplify" any of this back into a `bool` ([`Path::exists`], `is_dir`, `is_ok`): those
 /// answer two ways to a question the world answers three ways, and every such collapse records
 /// "I could not look" as "it is not there".  That single inference is the source of the whole
-/// bug family this crate exists to prevent.
-#[derive(Debug, Clone, Copy)]
-enum Presence {
+/// bug family this crate exists to prevent.  In place of `if path.exists()`, write
+///
+/// ```no_run
+/// # use cli_contract::{presence_resolved, PathError, Presence};
+/// # fn f(path: &std::path::Path) -> Result<(), PathError> {
+/// match presence_resolved(path)? {
+///     Presence::Absent => { /* proven not there */ }
+///     Presence::Present(_) => { /* there: what the path names, a link followed */ }
+/// }
+/// # Ok(()) }
+/// ```
+///
+/// [`presence_resolved`] follows a link, as [`Path::exists`], [`Path::is_dir`], and
+/// [`Path::is_file`] do, so it is their replacement; where they answer `false` for a link to
+/// nothing, it answers [`PathError::DanglingSymlink`].  Where the question is about the entry
+/// itself, so that a link counts as there whatever it names, use [`presence`].
+///
+/// The enum is exhaustive on purpose, so that match needs no `_` arm.  A wildcard arm on a
+/// verdict is the same silent default as `unwrap_or(false)`: a caller would have to guess what an
+/// answer it has never seen means.  A new variant would break every match, as it should.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
     /// Proven absent: the probe returned `NotFound`, and nothing else.
     Absent,
-    /// Present, with the file type the probe saw.
+    /// Present, with the file type the probe saw: from [`presence`], a link as itself; from
+    /// [`presence_resolved`], what the link names, never a link.
     Present(fs::FileType),
 }
 
@@ -537,13 +558,40 @@ fn proves_absence(e: &std::io::Error) -> bool {
 
 /// Probe a path with `lstat`: a symlink is seen **as itself**, not as its target.
 ///
+/// The answer comes in three forms, never two: `Ok(Presence::Absent)` is a proven `NotFound`, and
+/// nothing else; `Ok(Presence::Present(_))` carries the type of what is there; and an `Err` is
+/// never a verdict.  Where the probe could not tell, because of permission denied, an I/O error, or
+/// a network share whose server cannot be reached, the `Err` is [`PathError::Undeterminable`],
+/// naming the OS's error.  So is the empty path, which names nothing.  A trailing separator or a
+/// trailing `/.` is dropped first, so `link/` is probed as the link itself.
+///
+/// An unmounted volume is not one of these: its mount point is simply not there.  So on macOS
+/// `/Volumes/Backup/state.json` answers `Absent` while `Backup` is not mounted, because the OS
+/// says `NotFound`, and so does a path on a Windows drive that is not present, or on a share its
+/// server says does not exist.  Before trusting an `Absent` below an external disk, a network
+/// share, or a synced folder, and above all before a delete, prove that the container is there:
+/// [`require_marker`] or [`require_input_dir`] on its root.
+///
 /// A path below a file or a dangling link cannot exist, and the OS says so in different words:
 /// Unix refuses the lookup (ENOTDIR), Windows answers `NotFound`, and a dangling link above answers
 /// `NotFound` everywhere.  So when `path` is not there, or could not be looked up, its ancestors
-/// are examined from the parent up, and the first one that can be looked up decides: a file, a
-/// link to one, or a dangling link there is the error that names it, as [`probe_dir`] names it,
-/// never "absent" or "cannot determine" about the path below it.
-fn probe(path: &Path) -> Result<Presence, PathError> {
+/// are examined from the parent up, and the first one that can be looked up decides.  A file or a
+/// link to one there is [`PathError::NotADirectory`], and a dangling link there is
+/// [`PathError::DanglingSymlink`], each naming that ancestor, never "absent" or "cannot determine"
+/// about the path below it.
+pub fn presence(path: &Path) -> Result<Presence, PathError> {
+    // `lstat("")` is `NotFound`, and the empty path has no ancestors to walk, so without this the
+    // answer would be `Absent`: an empty string where a path was required is a value that went
+    // missing upstream, never proof that a file is not there.
+    if path.as_os_str().is_empty() {
+        return Err(PathError::Undeterminable {
+            path: PathBuf::new(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "an empty path names nothing",
+            ),
+        });
+    }
     let verdict = match fs::symlink_metadata(without_trailing_separator(path)) {
         Ok(md) => return Ok(Presence::Present(md.file_type())),
         Err(e) if proves_absence(&e) => Ok(Presence::Absent),
@@ -602,20 +650,23 @@ fn probe_target(path: &Path) -> Result<Presence, PathError> {
 /// matching OS convention); `Absent` means a proven `NotFound`.  Anything else at `path` is the
 /// error that names it, never "absent": a file, or a link to one, is [`PathError::NotADirectory`],
 /// and a link to nothing is [`PathError::DanglingSymlink`].  So is either one above `path`, under
-/// every policy and on every platform, because [`probe`] names what stands in the way.
+/// every policy and on every platform, because [`presence`] names what stands in the way.
 fn probe_dir(path: &Path) -> Result<Presence, PathError> {
-    match probe_resolved(path)? {
+    match presence_resolved(path)? {
         Presence::Present(ft) if !ft.is_dir() => Err(PathError::NotADirectory(path.to_path_buf())),
         presence => Ok(presence),
     }
 }
 
-/// [`probe`], with a symlink followed to its target, as the OS resolves it.  `Present` is the
-/// type of what the path resolves to — never a link — and `Absent` is a proven `NotFound` of the
-/// path itself.  A link to nothing is [`PathError::DanglingSymlink`]: it exists as a link but
-/// resolves to nothing, and that fact is reported, never "missing".
-fn probe_resolved(path: &Path) -> Result<Presence, PathError> {
-    match probe(path)? {
+/// [`presence`], with a symlink followed to its target, as the OS resolves it, and as
+/// [`Path::exists`] does.  `Present` is the type of what the path resolves to — never a link — and
+/// `Absent` is a proven `NotFound` of the path itself.  A link whose target is not there is
+/// [`PathError::DanglingSymlink`], never `Absent`: it exists as a link but resolves to nothing, and
+/// that fact is reported, never "missing".  A link whose target cannot be looked up is
+/// [`PathError::Undeterminable`], naming the OS's error: a loop of links (`ELOOP` on Unix), or, on
+/// Unix, a target below a file (`ENOTDIR`).
+pub fn presence_resolved(path: &Path) -> Result<Presence, PathError> {
+    match presence(path)? {
         Presence::Present(ft) if ft.is_symlink() => match probe_target(path)? {
             Presence::Absent => Err(PathError::DanglingSymlink(path.to_path_buf())),
             target => Ok(target),
@@ -630,7 +681,7 @@ fn probe_resolved(path: &Path) -> Result<Presence, PathError> {
 /// A path that could not be inspected is [`PathError::Undeterminable`], never
 /// [`PathError::MissingInput`]: absence is claimed only on a proven `NotFound`.
 pub fn require_input_path(path: &Path) -> Result<(), PathError> {
-    match probe_resolved(path)? {
+    match presence_resolved(path)? {
         Presence::Absent => Err(PathError::MissingInput(path.to_path_buf())),
         Presence::Present(_) => Ok(()),
     }
@@ -675,7 +726,7 @@ pub fn require_marker(dir: &Path, marker: &MarkerName) -> Result<(), PathError> 
         return Err(PathError::MissingInput(dir.to_path_buf()));
     }
     let path = dir.join(marker.as_str());
-    match probe_resolved(&path)? {
+    match presence_resolved(&path)? {
         Presence::Absent => Err(PathError::MarkerMissing {
             dir: dir.to_path_buf(),
             marker: marker.to_string(),
@@ -697,7 +748,7 @@ pub fn require_marker(dir: &Path, marker: &MarkerName) -> Result<(), PathError> 
 /// passes through — it is not a symlink, and the must-exist checks own that report.  A path below
 /// a file or a dangling link is refused, naming that entry, as those checks would name it.
 pub fn reject_symlink(path: &Path) -> Result<(), PathError> {
-    match probe(path)? {
+    match presence(path)? {
         Presence::Present(ft) if ft.is_symlink() => Err(PathError::IsSymlink(path.to_path_buf())),
         Presence::Present(_) | Presence::Absent => Ok(()),
     }
@@ -899,7 +950,7 @@ fn check_output_leaf(path: &Path, clobber: Clobber) -> Result<(), PathError> {
     // past `Clobber::Deny`: the refusal is the guard, and skipping it silently for a file we could
     // not inspect is the guard failing open.
     // A link to nothing is refused: the write would create its target somewhere never validated.
-    match probe_resolved(path)? {
+    match presence_resolved(path)? {
         // A directory in the output file's place is a specific error, distinct from clobbering a
         // file.
         Presence::Present(ft) if ft.is_dir() => Err(PathError::NotAFile(path.to_path_buf())),
@@ -983,7 +1034,7 @@ pub fn is_mount_root(path: &Path) -> bool {
     // An identity probe that could not be made refuses, as an unreadable cwd does.
     !matches!(mount_root(path), Ok(false))
         || !matches!(dotdot_after_missing(path), Ok(false))
-        || matches!(probe_resolved(path), Err(PathError::DanglingSymlink(_)))
+        || matches!(presence_resolved(path), Err(PathError::DanglingSymlink(_)))
 }
 
 /// [`is_mount_root`] without its `..` and dangling-link checks, which the contract functions make
@@ -1358,7 +1409,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_link_to_a_file_spelled_with_a_separator_reports_what_the_bare_link_does() {
-        // `stat("flink/.")` fails with ENOTDIR, so once `probe` saw the link, the `stat` after it
+        // `stat("flink/.")` fails with ENOTDIR, so once `presence` saw the link, the `stat` after it
         // still answered "cannot determine" where the bare `flink` is plainly not a directory.
         let d = tmp("file_link_separator");
         let file = d.join("real.txt");

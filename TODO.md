@@ -70,10 +70,15 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 
 - [ ] [plan-0020](plans/plan-0020-presence-guarded-write-exit-table-and-contract-tests.md) — **a
   public presence probe, a guarded write, a built exit table, and shared contract tests**, from a
-  survey of the maintainer’s tools: `Presence` and `probe` made public, so a lint can ban
+  survey of the maintainer’s tools: `Presence` and its probe made public, so a lint can ban
   `Path::exists` and name the fix; `write_file`, which never leaves a half-written file;
   `ExitTable`, so a tool’s own codes are documented from one declaration; and a `testing` feature
-  for the closed-stream, dry-run, and `--help` tests.  Additive.  Part 1 first.
+  for the closed-stream, dry-run, and `--help` tests.  Additive.  Part 1, `presence`, landed in
+  0.6.4; then part 3, then parts 2 and 4.
+
+- [ ] [plan-0021](plans/plan-0021-could-not-tell-below-a-missing-mount-point.md) — **“could not
+  tell” below a missing mount point**: `presence` answers `Absent` for a path on an unmounted
+  volume, as the OS reports it, so a tool must prove the volume first.  Catch it in the probe.
 
 ## Smaller items
 

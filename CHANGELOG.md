@@ -4,6 +4,16 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.4] - 2026-11-14
+
+### Added
+
+- **`presence` and `presence_resolved`, the crate’s three-state probe, are public**, with `Presence`, their answer: `Ok(Presence::Absent)` is a proven `NotFound`, `Ok(Presence::Present(file_type))` is what is there, and an `Err` is never a verdict, whether the probe could not tell (`Undeterminable`) or found something in the way (`NotADirectory`, `DanglingSymlink`).  `presence_resolved` follows a link, as `Path::exists`, `is_dir`, and `is_file` do, so it is what a tool calls in their place, since they answer `false` to every error; a link to nothing is `PathError::DanglingSymlink`, where they answer `false`.  `presence` sees a link as itself.  `Presence` is exhaustive, so a match on it needs no `_` arm.  An unmounted volume answers `Absent`, as the OS reports it, so a tool proves an external disk is there before trusting an `Absent` below it (plan-0020, part 1).
+
+### Changed
+
+- **The empty path is `PathError::Undeterminable`, never absent.**  `require_input_path("")`, `require_input_dir("")`, and `require_marker("", …)` answered `MissingInput`, and still exit 1; `reject_symlink("")` passed it, and now refuses it.  An empty string where a path was required is a value that went missing upstream, not proof that a file is not there.
+
 ## [0.6.3] - 2026-11-14
 
 ### Fixed
@@ -57,5 +67,6 @@ The first public release.
 
 These affect only users of the unpublished versions before 0.6.0.
 
+[0.6.4]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.4
 [0.6.1]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.1
 [0.6.0]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.0

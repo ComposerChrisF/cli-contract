@@ -44,6 +44,24 @@ sends you to `chmod`, the second sends you hunting a typo that does not exist �
 delete, that same one-step collapse is how a tool talks itself into destroying data it merely failed
 to read.
 
+The probe is public, for a tool’s own questions (“is my manifest there?”, “does this rule’s target
+exist?”): `presence_resolved(path)` follows a link, as `Path::exists` does, and `presence(path)`
+sees a link as itself.  Each returns `Result<Presence, PathError>`, so in place of
+`if path.exists()` a tool writes
+
+```rust,ignore
+match presence_resolved(path)? {
+    Presence::Absent => { /* proven not there */ }
+    Presence::Present(_) => { /* there */ }
+}
+```
+
+and an `Err` is never a verdict: `?` passes it up, whether the probe could not tell
+(`Undeterminable`, which the empty path is too) or found something in the way (`NotADirectory`,
+`DanglingSymlink`).  A link to nothing is an `Err` here, where `exists` answers `false`.  An
+unmounted volume answers `Absent`, as the OS reports it, so before trusting an `Absent` below an
+external disk, prove that the disk is there, with `require_marker` on its root.
+
 ### Inputs
 
 ```rust,ignore

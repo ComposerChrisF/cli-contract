@@ -49,8 +49,8 @@ Additive, so it can land in any 0.6.x.
 
 ## Implementation Notes
 
-- `probe` and `probe_target` already answer three ways; build on them.  A `read_link` or `canonicalize` error is `Undeterminable`, naming the link.  A `NotFound` from `canonicalize` after `probe_target` saw the target is a race, and it is `Undeterminable` too, never `Dangling`: only the target probe’s own proven `NotFound` may say dangling.
-- A path below a file or a dangling link is the error that names that entry, as for every entry point (`probe` already does this), and a trailing separator is dropped first, so `link/` is the link.
+- `presence` (public since 0.6.4) and the private `probe_target` already answer three ways; build on them.  A `read_link` or `canonicalize` error is `Undeterminable`, naming the link.  A `NotFound` from `canonicalize` after `probe_target` saw the target is a race, and it is `Undeterminable` too, never `Dangling`: only the target probe’s own proven `NotFound` may say dangling.
+- A path below a file or a dangling link is the error that names that entry, as for every entry point (`presence` already does this), and a trailing separator is dropped first, so `link/` is the link.
 - The facts are a snapshot: the link can change between the reads.  Say so in the rustdoc, as the other entry points do for creation.
 - The name is open.  `symlink_info` never shipped, so it is free, but users of the unpublished versions knew a different shape under it.
 - Tests: the locked-directory fixture, which the target probe refuses before any field is read, and a mutation check that an unresolvable target never comes back as `Dangling` or `None`.

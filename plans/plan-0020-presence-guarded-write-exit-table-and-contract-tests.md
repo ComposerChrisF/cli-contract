@@ -39,6 +39,8 @@ pub fn presence_resolved(path: &Path) -> Result<Presence, PathError>;
 
 The rustdoc keeps the existing explanation of why there is no `Unknown` variant, and adds the one-line recipe a lint can point to: `match presence(p)? { Presence::Absent => …, Presence::Present(_) => … }` in place of `if p.exists()`.  The README’s “every probe here answers three ways” then names a function a caller can use.
 
+**Landed 14-Nov-2026** in 0.6.4, as the amended text proposes, with these additions from its review.  `Presence` also derives `PartialEq` and `Eq`, and the private `probe` and `probe_resolved` were renamed `presence` and `presence_resolved`, not wrapped, so each has one name.  The recipe names `presence_resolved`, not `presence`: `Path::exists`, `is_dir`, and `is_file` follow a link, so a rewrite that keeps their link behavior uses it, and `presence` is for a question about the entry itself.  The empty path is `Undeterminable`, never `Absent`, under the house rule that an empty string where a value was required is unknown; that changes `require_input_path("")`, `require_input_dir("")`, `require_marker("", …)`, and `reject_symlink("")` too.  The rustdoc says that an unmounted volume answers `Absent`, as the OS reports it, and names the guard; plan-0021 proposes catching it in the probe.  Black-box tests pin the three answers, the link, loop, and empty-path cases, and the ancestor walk, and their two-arm match stops compiling if the enum is made `#[non_exhaustive]`.  Six mutants are caught: an `EACCES`, an `ELOOP`, or a dangling link read as `Absent`, the trailing separator kept, the ancestor walk skipped, and the empty-path check removed.
+
 ### 2.  `paths::write_file`, the guarded write
 
 ```rust

@@ -6,9 +6,9 @@
 use std::path::{Path, PathBuf};
 
 use cli_contract::{
-    check_destination, check_output_file, ensure_destination, exit, prepare_output_file,
-    reject_symlink, require_input_dir, require_input_path, Clobber, CreateMode, DestPolicy,
-    PathError,
+    check_destination, check_output_file, ensure_destination, exit, prepare_output_file, presence,
+    presence_resolved, reject_symlink, require_input_dir, require_input_path, require_marker,
+    Clobber, CreateMode, DestPolicy, MarkerName, PathError, Presence,
 };
 // Used only by the floor tests, which do not run on Windows.
 #[cfg(not(windows))]
@@ -498,6 +498,159 @@ fn an_unknowable_absent_entry_is_undeterminable_and_never_created() {
         "something was created under the locked directory"
     );
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+// --- the presence probes ----------------------------------------------------------------------
+//
+// rustdoc of Presence: "`Absent` ... means a proven `NotFound`, and nothing else", and "The enum
+// is exhaustive on purpose, so that match needs no `_` arm."  The match in `verdict` has none, so
+// this file stops compiling if the enum is ever made `#[non_exhaustive]`.
+
+fn verdict(r: Result<Presence, PathError>) -> String {
+    match r {
+        Ok(p) => match p {
+            Presence::Absent => "absent".to_string(),
+            Presence::Present(ft) if ft.is_symlink() => "link".to_string(),
+            Presence::Present(ft) if ft.is_dir() => "dir".to_string(),
+            Presence::Present(_) => "file".to_string(),
+        },
+        Err(e) => format!("{e:?}"),
+    }
+}
+
+/// rustdoc of presence: "`Ok(Presence::Absent)` is a proven `NotFound`" and
+/// "`Ok(Presence::Present(_))` carries the type of what is there".
+#[test]
+fn presence_answers_absent_present_and_the_type() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("f.txt");
+    std::fs::write(&file, b"x").unwrap();
+    let nope = tmp.path().join("nope");
+    for (probe, name) in [
+        (presence as fn(&Path) -> _, "presence"),
+        (presence_resolved, "presence_resolved"),
+    ] {
+        assert_eq!(probe(&nope).unwrap(), Presence::Absent, "{name}");
+        assert_eq!(verdict(probe(&file)), "file", "{name}");
+        assert_eq!(verdict(probe(tmp.path())), "dir", "{name}");
+    }
+}
+
+/// rustdoc of presence: "Where the probe could not tell, because of permission denied, ... the
+/// `Err` is [`PathError::Undeterminable`]", whether or not the entry exists.
+#[cfg(unix)]
+#[test]
+fn presence_could_not_tell_is_an_error_never_absent() {
+    if is_root() {
+        return;
+    }
+    let f = Locked::new();
+    let mut wrong = Vec::new();
+    for leaf in ["real.txt", "nope"] {
+        for (r, name) in [
+            (presence(&f.dir.join(leaf)), "presence"),
+            (presence_resolved(&f.dir.join(leaf)), "presence_resolved"),
+        ] {
+            if !matches!(r, Err(PathError::Undeterminable { .. })) {
+                wrong.push(format!("{name} {leaf}: {}", verdict(r)));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// rustdoc of presence: "So is the empty path, which names nothing", after "the `Err` is
+/// [`PathError::Undeterminable`]".  Every entry point that probes the path itself inherits it.
+#[test]
+fn the_empty_path_is_undeterminable_never_absent() {
+    let p = Path::new("");
+    let marker = MarkerName::new("m").unwrap();
+    let mut wrong = Vec::new();
+    for (what, r) in [
+        ("presence", presence(p).map(|_| ())),
+        ("presence_resolved", presence_resolved(p).map(|_| ())),
+        ("require_input_path", require_input_path(p)),
+        ("require_input_dir", require_input_dir(p)),
+        ("require_marker", require_marker(p, &marker)),
+        ("reject_symlink", reject_symlink(p)),
+    ] {
+        if !matches!(&r, Err(PathError::Undeterminable { path, .. }) if path == p) {
+            wrong.push(format!("{what}: {r:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// rustdoc of presence: "a symlink is seen **as itself**" and "`link/` is probed as the link
+/// itself"; of presence_resolved: "A link whose target is not there is
+/// [`PathError::DanglingSymlink`], never `Absent`" and "a loop of links (`ELOOP` on Unix)".
+#[cfg(unix)]
+#[test]
+fn presence_sees_a_link_and_presence_resolved_follows_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("f.txt");
+    std::fs::write(&file, b"x").unwrap();
+    let to_file = tmp.path().join("to_file");
+    std::os::unix::fs::symlink(&file, &to_file).unwrap();
+    let dangling = tmp.path().join("dangling");
+    std::os::unix::fs::symlink(tmp.path().join("missing"), &dangling).unwrap();
+    let looped = tmp.path().join("looped");
+    std::os::unix::fs::symlink(&looped, &looped).unwrap();
+    let with_sep = PathBuf::from(format!("{}/", dangling.display()));
+
+    for p in [&to_file, &dangling, &looped, &with_sep] {
+        assert_eq!(verdict(presence(p)), "link", "{}, as itself", p.display());
+    }
+    assert_eq!(
+        verdict(presence_resolved(&to_file)),
+        "file",
+        "link to a file"
+    );
+    match presence_resolved(&dangling) {
+        Err(PathError::DanglingSymlink(p)) => assert_eq!(p, dangling),
+        other => panic!("dangling link: {}", verdict(other)),
+    }
+    match presence_resolved(&looped) {
+        Err(PathError::Undeterminable { path, source }) => {
+            assert_eq!(path, looped);
+            assert_eq!(source.raw_os_error(), Some(libc::ELOOP), "{source}");
+        }
+        other => panic!("self-loop: {}", verdict(other)),
+    }
+}
+
+/// rustdoc of presence: "Unix refuses the lookup (ENOTDIR), Windows answers `NotFound`", and "A
+/// file or a link to one there is [`PathError::NotADirectory`] ... naming that ancestor".  No link
+/// is needed, so this runs on Windows too, where the walk is all that keeps the answer from being
+/// `Absent`.
+#[test]
+fn presence_below_a_file_names_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("f.txt");
+    std::fs::write(&file, b"x").unwrap();
+    for (r, name) in [
+        (presence(&file.join("x")), "presence"),
+        (presence_resolved(&file.join("x")), "presence_resolved"),
+    ] {
+        match r {
+            Err(PathError::NotADirectory(p)) => assert_eq!(p, file, "{name}"),
+            other => panic!("{name} below a file: {}", verdict(other)),
+        }
+    }
+}
+
+/// rustdoc of presence: "a dangling link there is [`PathError::DanglingSymlink`], ... naming that
+/// ancestor".
+#[cfg(unix)]
+#[test]
+fn presence_below_a_dangling_link_names_the_link() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dangling = tmp.path().join("dangling");
+    std::os::unix::fs::symlink(tmp.path().join("missing"), &dangling).unwrap();
+    match presence(&dangling.join("x")) {
+        Err(PathError::DanglingSymlink(p)) => assert_eq!(p, dangling),
+        other => panic!("below a dangling link: {}", verdict(other)),
+    }
 }
 
 // --- `.`, `..`, `/`, and trailing separators -------------------------------------------------
