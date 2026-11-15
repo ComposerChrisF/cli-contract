@@ -68,6 +68,13 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   an output file path that ends in a separator**: `out.pdf/` is checked as `out.pdf` and approved,
   though no file can be written there.  The write fails loudly today.
 
+- [ ] [plan-0020](plans/plan-0020-presence-guarded-write-exit-table-and-contract-tests.md) — **a
+  public presence probe, a guarded write, a built exit table, and shared contract tests**, from a
+  survey of the maintainer’s tools: `Presence` and `probe` made public, so a lint can ban
+  `Path::exists` and name the fix; `write_file`, which never leaves a half-written file;
+  `ExitTable`, so a tool’s own codes are documented from one declaration; and a `testing` feature
+  for the closed-stream, dry-run, and `--help` tests.  Additive.  Part 1 first.
+
 ## Smaller items
 
 - [ ] **The leak gate trusts a lowered floor.**  It reads `bugs/FLOOR` and `plans/FLOOR` from the
