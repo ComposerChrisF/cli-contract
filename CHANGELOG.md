@@ -75,5 +75,7 @@ These affect only users of the unpublished versions before 0.6.0.
 
 [0.6.5]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.5
 [0.6.4]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.4
+[0.6.3]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.3
+[0.6.2]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.2
 [0.6.1]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.1
 [0.6.0]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.0
