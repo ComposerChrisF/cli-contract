@@ -3,6 +3,8 @@
 pub mod exit;
 pub mod paths;
 pub mod pipe;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 pub use exit::{FINDINGS, OK, SETUP, TOOL_ERROR, USAGE};
 pub use paths::{

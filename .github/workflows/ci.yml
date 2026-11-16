@@ -24,7 +24,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         # Both sets named, so the matrix still covers both when the default changes.
-        features: ["--no-default-features", "--features clap"]
+        features: ["--no-default-features", "--all-features"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -45,7 +45,7 @@ jobs:
         with:
           toolchain: "1.79.0"
       - run: cargo check --no-default-features
-      - run: cargo check --features clap
+      - run: cargo check --all-features
 
   clippy:
     runs-on: ubuntu-latest

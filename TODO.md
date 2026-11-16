@@ -30,8 +30,10 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 - [x] **0.6.5 is on crates.io** (15-Nov-2026), tagged `cli-contract-v0.6.5`.  It adds
   `exit::ExitTable`, a tool’s exit-code table built from the codes it returns (plan-0020, part 3).
 
-- [ ] **Publish 0.6.6**, which adds `write_file`, the guarded write (plan-0020, part 2).  It waits
-  on the maintainer.
+- [ ] **Publish 0.6.7**, which adds `write_file`, the guarded write (plan-0020, part 2), and the
+  `testing` feature, the shared contract tests (part 4, the last).  0.6.6 was held, by the
+  maintainer’s choice on 16-Nov-2026, to go out with part 4, so it is never published on its own.
+  It waits on the maintainer.
 
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
@@ -77,17 +79,16 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   an output file path that ends in a separator**: `out.pdf/` is checked as `out.pdf` and approved,
   though no file can be written there.  The write fails loudly today.
 
-- [ ] [plan-0020](plans/plan-0020-presence-guarded-write-exit-table-and-contract-tests.md) — **a
-  public presence probe, a guarded write, a built exit table, and shared contract tests**, from a
-  survey of the maintainer’s tools: `Presence` and its probe made public, so a lint can ban
-  `Path::exists` and name the fix; `write_file`, which never leaves a half-written file;
-  `ExitTable`, so a tool’s own codes are documented from one declaration; and a `testing` feature
-  for the closed-stream, dry-run, and `--help` tests.  Additive.  Part 1, `presence`, landed in
-  0.6.4, part 3, `ExitTable`, in 0.6.5, and part 2, `write_file`, in 0.6.6; then part 4.
-
 - [ ] [plan-0021](plans/plan-0021-could-not-tell-below-a-missing-mount-point.md) — **“could not
   tell” below a missing mount point**: `presence` answers `Absent` for a path on an unmounted
   volume, as the OS reports it, so a tool must prove the volume first.  Catch it in the probe.
+
+- [ ] [plan-0022](plans/plan-0022-exit-table-refuses-101.md) — **`ExitTable` refuses 101**, a Rust
+  panic’s code, which the `testing` helpers fail whatever the table says.  A breaking change.
+
+- [ ] [plan-0023](plans/plan-0023-a-dry-run-that-touches-nothing.md) — **a dry run that touches
+  nothing, metadata included**: `dry_run_writes_nothing` also compares permissions, inode, and
+  modification time.  It grows a public test API’s contract.
 
 ## Smaller items
 

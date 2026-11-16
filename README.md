@@ -351,6 +351,10 @@ is _doing_ something while it prints must suppress-and-finish instead.
 cli-contract = "0.6"
 # or, to take CreateMode and Clobber as clap value enums:
 cli-contract = { version = "0.6", features = ["clap"] }
+
+[dev-dependencies]
+# the contract tests, for a tool's integration tests:
+cli-contract = { version = "0.6", features = ["testing"] }
 ```
 
 Runnable versions of the snippets above are in `examples/`: `inputs`, `destination` (the
@@ -362,11 +366,20 @@ directory half of the `--dry-run` snippet), and `broken_pipe`.  For instance,
 | Feature | Default | What it adds |
 |---|---|---|
 | `clap` | off | `clap::ValueEnum` for `CreateMode` and `Clobber`, so a clap tool takes them as `value_enum` flags |
+| `testing` | off | `testing`, the contract tests every tool needs, for its integration tests; no new dependency |
 
-Without the feature, both types still implement `FromStr` and `Display` with the same spellings
+Without `clap`, both types still implement `FromStr` and `Display` with the same spellings
 (`none`, `final`, `all`; `allow`, `deny`), for any other argument parser.  A string that names none
 of the values of the type being parsed is a `ParseValueError`, which is a usage error (exit 2) on
 the command line and a tool error (exit 1) in a config file.
+
+With `testing`, a tool’s integration tests run its built binary through four checks: `closed_stdout`
+and `closed_stderr` run it with the stream refusing every write, as a pipe does once its reader has
+gone (§ 3), and assert that it did not panic; `dry_run_writes_nothing` asserts that a dry run left a
+directory tree as it was; and `help_has_exit_table` asserts that `--help` prints its
+`ExitTable`.  Each also fails the test on an exit code the table does not list.  A tool that writes
+its messages with `eprintln!` fails `closed_stderr`, so adopt that one as a ratchet: a new tool
+passes it from the start, and an old one once its messages no longer go through `eprintln!`.
 
 ## Known limitations
 
@@ -420,11 +433,20 @@ weighing the crate finds them in one place.
   writing.  Anything else it holds is opened through its path, as `fs::write` opens it: on Linux,
   where that reopens it, a socket cannot be, so `/dev/stdout` fails when stdout is a socket, as
   under systemd’s `StandardOutput=journal`, while macOS writes it.
+- **`testing` checks less than its names may suggest.**  A panic is told by its exit alone, so a
+  panic in a thread the tool survives is not seen.  Only the helpers’ own runs have their exit codes
+  checked against the table, not every run in the tool’s tests.  `dry_run_writes_nothing` compares
+  each path’s type, a file’s bytes, and a link’s target, so a run that rewrites a file with the same
+  bytes, touches it, or changes its permissions passes; a later version may compare those too.  A
+  link at `tree` is followed, so a run that moves `tree` and links its name to the new place passes
+  as well.
 - **On Windows:** there is no `SIGPIPE`, so `reset_sigpipe` does nothing; a volume mounted into an
   empty NTFS folder is not detected; `write_file` is untested with a device such as `NUL`, and
   most likely fails to write one, since the standard library’s file type reports a device there as
-  a file, so it is not written in place; and the tests do not stage symbolic links, permissions, a
-  closed pipe, a FIFO, or a failed write there.
+  a file, so it is not written in place; `testing`’s `closed_stdout` and `closed_stderr` close the
+  pipe’s reader only once the tool has started, so a tool that writes at once may write a little
+  first, and pass untested; and the tests do not stage symbolic links, permissions, a closed pipe,
+  a FIFO, or a failed write there.
 
 ## Status
 
@@ -432,7 +454,7 @@ Everything above is built and tested on Linux and macOS, the `/Volumes` identity
 alone.  On Windows it is built and tested,
 except for the cases the tests stage on Unix only: symbolic links, permissions, a closed pipe, a
 deleted current directory, a file spelled with a trailing separator, a FIFO, a descriptor, and a
-write that fails.  `ROADMAP.md`, in the
+write that fails.  The `testing` feature’s own tests run on Unix only.  `ROADMAP.md`, in the
 repository, tracks candidate additions: config discovery and `--show-config`, `--help` section
 builders, a findings accumulator, and a dry-run convention.
 

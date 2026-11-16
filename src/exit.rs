@@ -124,6 +124,10 @@ const HIGHEST: u8 = 125;
 /// A table is written from literals, so a code it cannot hold is a mistake in the tool's source,
 /// and the methods that add one panic.  They run when the table is built, which for a table handed
 /// to clap is every run of the tool, so the tool's first test that runs it finds the mistake.
+///
+/// A code the tool returns without declaring it here is not caught by the table itself.  With the
+/// `testing` feature, each of its contract helpers checks the code of its own run against the
+/// table, and no other run's.
 #[derive(Debug, Clone)]
 pub struct ExitTable {
     codes: BTreeMap<u8, String>,
@@ -219,6 +223,17 @@ impl ExitTable {
         }
         self.modes.push((name, table));
         self
+    }
+
+    /// Whether the table lists `code`: one of the canonical five, one of the tool's own, or one a
+    /// mode lists.
+    #[cfg(feature = "testing")]
+    pub(crate) fn lists(&self, code: u8) -> bool {
+        self.codes.contains_key(&code)
+            || self
+                .modes
+                .iter()
+                .any(|(_, codes)| codes.contains_key(&code))
     }
 
     /// The table as `--help` text, for clap's `after_long_help`: the main table, then each mode's
