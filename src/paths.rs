@@ -10,8 +10,10 @@
 //! ([`CreateMode::Final`], [`CreateMode::All`]) are opt-in, and the mount-root floor
 //! ([`is_mount_root`]) is unconditional — no mode may create a mount point.
 
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 /// How many missing directory levels a tool may create for a caller-asserted output path.
@@ -337,7 +339,8 @@ impl std::error::Error for PolicyError {}
 /// A violation of the path contract.  Every variant maps to [`crate::exit::TOOL_ERROR`] (exit 1);
 /// render it to stderr and exit with [`PathError::exit_code`].  Most are caller-claim/world
 /// mismatches.  [`PathError::Undeterminable`] (the path could not be inspected) and
-/// [`PathError::Io`] (a create that failed after the checks passed) are the tool failing instead.
+/// [`PathError::Io`] (a create or a write that failed after the checks passed) are the tool failing
+/// instead.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PathError {
@@ -392,11 +395,12 @@ pub enum PathError {
         /// The error the probe met.
         source: std::io::Error,
     },
-    /// An underlying I/O error while creating a directory.
+    /// An underlying I/O error while creating a directory, or while writing an output file
+    /// ([`write_file`]).
     Io {
-        /// The directory being created.
+        /// The directory being created, or the output file as given.
         path: PathBuf,
-        /// The error the create returned.
+        /// The error the create or the write returned.
         source: std::io::Error,
     },
 }
@@ -978,6 +982,370 @@ fn output_parent(path: &Path) -> Result<Option<&Path>, PathError> {
         // A root that is not there (on Windows, an absent drive or share): no file can be written.
         None => Err(PathError::MissingDestination(path.to_path_buf())),
     }
+}
+
+/// Write `contents` to a caller-asserted **output file**, never leaving a half-written file in
+/// place of the old one.  The checks are [`check_output_file`]'s, with [`CreateMode::None`], so the
+/// parent must already exist: a tool that wants it made calls [`prepare_output_file`] first.  A
+/// tool with a write policy of its own keeps calling [`std::fs`] itself; this is the default.
+///
+/// - **[`Clobber::Allow`]**: the contents go to a temporary file beside the file, flushed to disk,
+///   which is then renamed over it, so a reader sees the old file or the new one, never part of
+///   either, and the old file survives a failed write.  A file the caller cannot write is refused,
+///   as [`fs::write`] refuses it, though a rename could replace it; so, on Linux, is a program that
+///   is running.  On Unix the new file takes the old one's permissions, setuid and setgid included,
+///   so a private file stays private, and the temporary file is owner-only until then.  It is a new
+///   file all the same, so the old one's owner, extended attributes, and other hard links are not
+///   carried over.  A link at the path is written through, as the OS would: the temporary file goes
+///   beside the file the link names, and the link stays.  The rename is made only over the file
+///   that was opened, or, for a new file, over nothing, as compared on Unix by device and inode
+///   just before it, so a file put in its place during the write is kept, and the write refused; a
+///   moment remains before the rename, and elsewhere no comparison is made.  A path that reaches no
+///   regular file to replace, such as `/dev/null` or a FIFO, is written in place, as a stream is,
+///   through the file already open, without truncating or flushing it.  So is a regular file that a
+///   descriptor holds, which a path or a link reaches through `/dev/fd`, as `/dev/stdout` reaches
+///   one when stdout is a file: it is written through the descriptor itself, where it stands, as a
+///   write to stdout would be.
+/// - **[`Clobber::Deny`]**: the file is made with `create_new`, so a file that appears after the
+///   check is refused as [`PathError::Clobber`], never replaced.  It is written in place, since a
+///   rename would replace such a file, and flushed to disk.  A write that fails removes the file it
+///   made, while that file is still the one at the path, as compared just before the removal: on
+///   Unix the device and inode are compared, and any doubt keeps the file, since another write may
+///   have put its own there; elsewhere stable std has no file identity, so it is removed by
+///   name.  A crash mid-write can leave a partial file where there was none, never in place of an
+///   old one.
+///
+/// The temporary file is the file's name with a `.` before it and `.<pid>.<n>.tmp` after it, made
+/// with `create_new`, so it never replaces anything: a name that is taken moves on to the next
+/// `n`.  After any error it is removed, if it can be; a crash leaves it behind.  A name within
+/// about 20 bytes of the filesystem's limit cannot be written under `Allow`.  Nor can a file in a
+/// directory the caller cannot write, another user's file in a sticky directory such as `/tmp`, or
+/// a file mounted on its own, such as a container's `/etc/hosts`, though [`fs::write`] could write
+/// each of them: making the temporary file and renaming it are writes to the directory.  The
+/// temporary file is a new file, so where the mount-root floor refuses one, as directly under
+/// `/mnt` or `/Volumes`, it is refused as [`PathError::MountRoot`], naming it, and a file there
+/// cannot be replaced under `Allow`.
+///
+/// The directory is not flushed once the file is in place, so a power loss soon after this returns
+/// may undo the write: the old file is there, or under `Deny` none, never a partial one.
+///
+/// A failure after the checks is [`PathError::Io`], naming the path as given, except where a
+/// verdict of the checks' own fits: [`PathError::MountRoot`] for a temporary file the floor
+/// refuses, [`PathError::DanglingSymlink`] for a link whose target is gone by the time of the
+/// write, and [`PathError::Clobber`] for a file that appears under `Deny`.
+pub fn write_file(path: &Path, contents: &[u8], clobber: Clobber) -> Result<(), PathError> {
+    check_output_file(path, CreateMode::None, clobber)?;
+    match clobber {
+        Clobber::Allow => write_replacing(path, contents),
+        Clobber::Deny => write_new(path, contents),
+    }
+}
+
+/// [`write_file`] under [`Clobber::Allow`].
+fn write_replacing(path: &Path, contents: &[u8]) -> Result<(), PathError> {
+    // What the OS would write to: `open` follows every link, and refuses a file the caller cannot
+    // write, as `fs::write`'s open does.
+    let mut file = match fs::OpenOptions::new().write(true).open(path) {
+        Ok(file) => file,
+        Err(e) if proves_absence(&e) => return write_absent(path, contents),
+        Err(source) => return Err(write_error(path, source)),
+    };
+    let opened = file
+        .metadata()
+        .map_err(|source| write_error(path, source))?;
+    if !opened.is_file() {
+        // A device, a FIFO, a terminal: a stream to write into, with no file to replace.  Written
+        // through the file already open, so nothing put in its place since can be written instead.
+        return file
+            .write_all(contents)
+            .map_err(|source| write_error(path, source));
+    }
+    drop(file);
+    #[cfg(unix)]
+    if let Some(fd) = descriptor(path).map_err(|source| write_error(path, source))? {
+        return write_descriptor(path, fd, &opened, contents);
+    }
+    let target = file_to_replace(path).map_err(|source| write_error(path, source))?;
+    replace(path, &target, Some(&opened), contents)
+}
+
+/// [`write_replacing`] when the open found nothing to write: a new file, but only when the entry
+/// itself is absent, since `open` follows a link and finds nothing at one whose target is gone.
+fn write_absent(path: &Path, contents: &[u8]) -> Result<(), PathError> {
+    match fs::symlink_metadata(without_trailing_separator(path)) {
+        Err(e) if proves_absence(&e) => replace(path, path, None, contents),
+        // A link to nothing now, as the checks refuse it.
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(PathError::DanglingSymlink(path.to_path_buf()))
+        }
+        Ok(_) => Err(write_error(
+            path,
+            std::io::Error::other("a file appeared there during the write"),
+        )),
+        Err(source) => Err(write_error(path, source)),
+    }
+}
+
+/// The entry to rename over, for a regular file that `path` opened: `path` itself, or, when its
+/// last component is a link, the file the link names, resolved as the OS resolves it, so that the
+/// link stays.
+fn file_to_replace(path: &Path) -> std::io::Result<PathBuf> {
+    let leaf = fs::symlink_metadata(without_trailing_separator(path))?;
+    if leaf.file_type().is_symlink() {
+        fs::canonicalize(path)
+    } else {
+        Ok(path.to_path_buf())
+    }
+}
+
+/// How many links [`descriptor`] follows, as Linux's `open` does.
+#[cfg(unix)]
+const LINKS: u32 = 40;
+
+/// The descriptor `path` names, when a step of its chain of links, followed one at a time as
+/// `open` follows them, is in `/dev/fd`: `/dev/fd/<n>` itself, or `/dev/stdout`, which leads
+/// there on Linux and macOS alike.  The step's name is the descriptor's number.
+#[cfg(unix)]
+fn descriptor(path: &Path) -> std::io::Result<Option<std::os::unix::io::RawFd>> {
+    let mut step = without_trailing_separator(path);
+    for _ in 0..LINKS {
+        if in_dev_fd(&step)? {
+            return match step.file_name().and_then(|name| name.to_str()) {
+                Some(name) => name.parse().map(Some).map_err(|_| {
+                    std::io::Error::other("a name in /dev/fd that is not a descriptor's number")
+                }),
+                None => Err(std::io::Error::other("a path in /dev/fd with no name")),
+            };
+        }
+        if !fs::symlink_metadata(&step)?.file_type().is_symlink() {
+            return Ok(None);
+        }
+        // A relative target is read from the link's own directory, as `open` reads it.
+        let target = fs::read_link(&step)?;
+        step = without_trailing_separator(&match step.parent() {
+            Some(dir) => dir.join(target),
+            None => target,
+        });
+    }
+    Err(std::io::Error::other("too many levels of symbolic links"))
+}
+
+/// Whether `path` is in `/dev/fd`, its directory recognized by device and inode, so that it names
+/// a descriptor.  No `/dev/fd` proves that nothing is in it.
+#[cfg(unix)]
+fn in_dev_fd(path: &Path) -> std::io::Result<bool> {
+    let dev_fd = match fs::metadata("/dev/fd") {
+        Ok(meta) => meta,
+        Err(e) if proves_absence(&e) => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    Ok(same_file(&fs::metadata(dir)?, &dev_fd))
+}
+
+/// Write `contents` through descriptor `fd` itself, where it stands, as a write to it would be:
+/// through a copy of it, which shares its offset and flags, once the copy is shown by device and
+/// inode to hold `opened`, the file that the path opened.
+#[cfg(unix)]
+fn write_descriptor(
+    path: &Path,
+    fd: std::os::unix::io::RawFd,
+    opened: &fs::Metadata,
+    contents: &[u8],
+) -> Result<(), PathError> {
+    use std::os::unix::io::FromRawFd;
+    // Not below 3, as std copies a descriptor, so the copy never takes a closed stdio number.
+    // SAFETY: fcntl reads a descriptor number and returns a new descriptor, or -1.
+    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
+    if copy < 0 {
+        return Err(write_error(path, std::io::Error::last_os_error()));
+    }
+    // SAFETY: `copy` is a new descriptor, owned here alone, and closed when `file` drops.
+    let mut file = unsafe { fs::File::from_raw_fd(copy) };
+    let held = file
+        .metadata()
+        .map_err(|source| write_error(path, source))?;
+    if !same_file(&held, opened) {
+        return Err(write_error(
+            path,
+            std::io::Error::other("the descriptor holds another file than the one opened"),
+        ));
+    }
+    file.write_all(contents)
+        .map_err(|source| write_error(path, source))
+}
+
+/// Write `contents` to a temporary file beside `target`, then rename it over `target`, which must
+/// still be `old`, the file that was opened, or, with no `old`, nothing at all.
+fn replace(
+    path: &Path,
+    target: &Path,
+    old: Option<&fs::Metadata>,
+    contents: &[u8],
+) -> Result<(), PathError> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // Owner-only until the old file's permissions are set, so nobody else can open it meanwhile.
+    #[cfg(unix)]
+    if old.is_some() {
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    }
+    let (temp, mut file) = create_temp(path, target, &options)?;
+    let written = file
+        .write_all(contents)
+        .and_then(|()| keep_permissions(&file, old.map(fs::Metadata::permissions)))
+        .and_then(|()| file.sync_all());
+    drop(file);
+    // Beside the file, so the rename never crosses a filesystem.
+    match written
+        .and_then(|()| still_there(target, old))
+        .and_then(|()| fs::rename(&temp, target))
+    {
+        Ok(()) => Ok(()),
+        Err(source) => {
+            // Ours to remove, since `create_new` made it.  The error reported is the write's.
+            let _ = fs::remove_file(&temp);
+            Err(write_error(path, source))
+        }
+    }
+}
+
+/// Whether `target` is still what the write examined, checked just before the rename: `old`, the
+/// file that was opened, or, with no `old`, nothing.  Anything else there is another write's, and
+/// is kept, so the write is refused.
+fn still_there(target: &Path, old: Option<&fs::Metadata>) -> std::io::Result<()> {
+    match (fs::symlink_metadata(target), old) {
+        (Ok(there), Some(old)) if same_file(&there, old) => Ok(()),
+        (Ok(_), _) => Err(std::io::Error::other(
+            "another file took its place during the write",
+        )),
+        (Err(e), None) if proves_absence(&e) => Ok(()),
+        (Err(e), _) => Err(e),
+    }
+}
+
+/// How many names [`create_temp`] tries before it gives up.
+const TEMP_NAMES: u32 = 100;
+
+/// Make the temporary file beside `target`, `.<name>.<pid>.<n>.tmp`, with `options`, which make it
+/// `create_new`, trying the next `n` when a name is taken, so that it never opens a file it did
+/// not make.  A name the mount-root floor refuses for a new file is refused here too, as
+/// [`PathError::MountRoot`] naming it.  An I/O failure names `path`, as given.
+fn create_temp(
+    path: &Path,
+    target: &Path,
+    options: &fs::OpenOptions,
+) -> Result<(PathBuf, fs::File), PathError> {
+    let Some(file_name) = target.file_name() else {
+        // The checks refuse a path that names no file before this is reached.
+        return Err(write_error(
+            path,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "the path names no file"),
+        ));
+    };
+    for n in 0..TEMP_NAMES {
+        let mut name = OsString::from(".");
+        name.push(file_name);
+        name.push(format!(".{}.{n}.tmp", std::process::id()));
+        let temp = target.with_file_name(name);
+        // A probe the floor could not make, after the checks passed, is the write failing.
+        let floored = mount_root(&temp).map_err(|e| match e {
+            PathError::Undeterminable { source, .. } => write_error(path, source),
+            other => other,
+        })?;
+        if floored {
+            return Err(PathError::MountRoot(temp));
+        }
+        match options.open(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            // Another write's temporary file, or one a crash left behind: not ours to open.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(source) => return Err(write_error(path, source)),
+        }
+    }
+    Err(write_error(
+        path,
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("all {TEMP_NAMES} temporary names beside it are taken"),
+        ),
+    ))
+}
+
+/// On Unix, give the temporary file the old file's permissions once it is written, since a write
+/// by anyone but root clears the setuid and setgid bits.
+#[cfg(unix)]
+fn keep_permissions(file: &fs::File, permissions: Option<fs::Permissions>) -> std::io::Result<()> {
+    permissions.map_or(Ok(()), |p| file.set_permissions(p))
+}
+
+/// Elsewhere the new file has the permissions a new file gets in its directory.
+#[cfg(not(unix))]
+fn keep_permissions(_: &fs::File, _: Option<fs::Permissions>) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// [`PathError::Io`] for a failure of [`write_file`]'s write, naming the path as given.
+fn write_error(path: &Path, source: std::io::Error) -> PathError {
+    PathError::Io {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+/// [`write_file`] under [`Clobber::Deny`]: made with `create_new`, and written in place.
+fn write_new(path: &Path, contents: &[u8]) -> Result<(), PathError> {
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        // A file that appeared after the check: refused, never replaced.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(PathError::Clobber(path.to_path_buf()))
+        }
+        Err(source) => return Err(write_error(path, source)),
+    };
+    let written = file.write_all(contents).and_then(|()| file.sync_all());
+    written.map_err(|source| {
+        // The error reported is the write's, whatever becomes of the file.
+        remove_if_made(file, path);
+        write_error(path, source)
+    })
+}
+
+/// Remove `path` after a failed write, while it is still the file `made` has open, which
+/// `create_new` made: on Unix, the same device and inode.  Any doubt keeps it, since another write
+/// may have put its own file there since.  Elsewhere stable std has no file identity, so it is
+/// removed by name.
+fn remove_if_made(made: fs::File, path: &Path) {
+    let still_made = match (made.metadata(), fs::symlink_metadata(path)) {
+        (Ok(ours), Ok(there)) => same_file(&ours, &there),
+        // Either probe failed: doubt, so it is kept.
+        (Err(_), _) | (_, Err(_)) => false,
+    };
+    if still_made {
+        // Removed while it is still open, so its inode cannot be reused for another file meanwhile.
+        let _ = fs::remove_file(path);
+    }
+    drop(made);
+}
+
+/// Whether two probes saw the same file: the same device and inode, on Unix.  Elsewhere stable std
+/// has no file identity, so it is taken on trust.
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
+    true
 }
 
 /// True if `path` names a mount root that must never be auto-created — the mount point itself,
@@ -3526,5 +3894,178 @@ mod tests {
             "{got:?}"
         );
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A failed `Deny` write removes the file `create_new` made, and only that file: another
+    /// write's file put in its place since is kept, as told apart by device and inode.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_new_file_is_removed_only_while_it_is_the_one_made() {
+        let d = tmp("remove_if_made");
+        let path = d.join("out.txt");
+        let new_file = || {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap()
+        };
+        remove_if_made(new_file(), &path);
+        assert!(
+            matches!(presence(&path), Ok(Presence::Absent)),
+            "the file it made was kept"
+        );
+        let made = new_file();
+        fs::write(d.join("theirs"), b"theirs").unwrap();
+        fs::rename(d.join("theirs"), &path).unwrap();
+        remove_if_made(made, &path);
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"theirs",
+            "another write's file was removed"
+        );
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// The temporary file is never a name the floor refuses for a new file, and the refusal comes
+    /// before anything is made, so it needs no permission to test.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_temporary_file_is_never_made_at_a_mount_root() {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        for target in ["/Volumes/notes.txt", "/mnt/notes.txt"] {
+            let target = Path::new(target);
+            let r = create_temp(target, target, &options);
+            assert!(
+                matches!(&r, Err(PathError::MountRoot(p)) if p.parent() == target.parent()),
+                "{target:?}: {r:?}"
+            );
+        }
+    }
+
+    /// The rename goes only over the file that was opened: a file put in its place during the
+    /// write is another write's, and is kept, with no temporary file left behind.  Unix only, since
+    /// elsewhere the files are not told apart.
+    #[cfg(unix)]
+    #[test]
+    fn the_rename_is_refused_when_another_file_took_the_place_of_the_one_opened() {
+        let d = tmp("still_there");
+        let target = d.join("out.txt");
+        fs::write(&target, b"old").unwrap();
+        let opened = fs::metadata(&target).unwrap();
+        fs::write(d.join("theirs"), b"theirs").unwrap();
+        fs::rename(d.join("theirs"), &target).unwrap();
+        let r = replace(&target, &target, Some(&opened), b"new");
+        assert!(matches!(r, Err(PathError::Io { .. })), "{r:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"theirs");
+        assert_eq!(
+            fs::read_dir(&d).unwrap().count(),
+            1,
+            "a temporary file was left"
+        );
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A new file is renamed only over nothing: a file that appeared during the write is kept.
+    #[test]
+    fn a_new_file_is_renamed_only_over_nothing() {
+        let d = tmp("still_there_new");
+        let target = d.join("out.txt");
+        fs::write(&target, b"theirs").unwrap();
+        let r = replace(&target, &target, None, b"new");
+        assert!(matches!(r, Err(PathError::Io { .. })), "{r:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"theirs");
+        assert_eq!(
+            fs::read_dir(&d).unwrap().count(),
+            1,
+            "a temporary file was left"
+        );
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// `open` follows a link, so its `NotFound` at a link whose target is gone is no proof that the
+    /// entry is absent: the link is refused, and stays a link.
+    #[cfg(unix)]
+    #[test]
+    fn an_open_that_finds_nothing_through_a_link_leaves_the_link() {
+        let d = tmp("write_absent");
+        let link = d.join("link.txt");
+        std::os::unix::fs::symlink("gone.txt", &link).unwrap();
+        let r = write_replacing(&link, b"new");
+        assert!(
+            matches!(&r, Err(PathError::DanglingSymlink(p)) if p == &link),
+            "{r:?}"
+        );
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_dir(&d).unwrap().count(),
+            1,
+            "something was written"
+        );
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A link whose target is gone by the time it is resolved is an error, never a descriptor and
+    /// never a file to replace, so nothing is written.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_nothing_is_no_descriptor_and_no_file() {
+        let d = tmp("file_to_replace");
+        let link = d.join("link.txt");
+        std::os::unix::fs::symlink("gone.txt", &link).unwrap();
+        let r = descriptor(&link);
+        assert!(r.is_err(), "{r:?}");
+        let r = file_to_replace(&link);
+        assert!(r.is_err(), "{r:?}");
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Under `Deny`, a file that appears after the check is refused as a clobber, never replaced.
+    #[test]
+    fn a_new_file_that_appeared_after_the_check_is_a_clobber() {
+        let d = tmp("write_new");
+        let path = d.join("out.txt");
+        fs::write(&path, b"theirs").unwrap();
+        let r = write_new(&path, b"new");
+        assert!(
+            matches!(&r, Err(PathError::Clobber(p)) if p == &path),
+            "{r:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"theirs");
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A descriptor that holds another file than the one the path opened is never written.
+    #[cfg(unix)]
+    #[test]
+    fn a_descriptor_holding_another_file_is_not_written() {
+        use std::os::unix::io::AsRawFd;
+        let d = tmp("write_descriptor");
+        let (a, b) = (d.join("a.txt"), d.join("b.txt"));
+        let held = fs::File::create(&a).unwrap();
+        fs::write(&b, b"b").unwrap();
+        let other = fs::metadata(&b).unwrap();
+        let r = write_descriptor(&a, held.as_raw_fd(), &other, b"new");
+        assert!(matches!(r, Err(PathError::Io { .. })), "{r:?}");
+        assert_eq!(fs::read(&a).unwrap(), b"");
+        drop(held);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A descriptor that cannot be copied is an error, and nothing is written.
+    #[cfg(unix)]
+    #[test]
+    fn a_descriptor_that_cannot_be_copied_is_an_error() {
+        let r = write_descriptor(
+            Path::new("/dev/fd/-1"),
+            -1,
+            &fs::metadata(".").unwrap(),
+            b"new",
+        );
+        assert!(matches!(r, Err(PathError::Io { .. })), "{r:?}");
     }
 }

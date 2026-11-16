@@ -4,6 +4,12 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.6] - 2026-11-15
+
+### Added
+
+- **`write_file`, the guarded write.**  `write_file(path, contents, clobber)` runs `check_output_file`’s checks with `CreateMode::None`, then writes the file without ever leaving a half-written file in place of the old one.  Under `Clobber::Allow` it opens the path for writing first, as `fs::write` does, so a file the caller cannot write is refused.  A regular file is replaced: a temporary file beside it, `.<name>.<pid>.<n>.tmp`, made with `create_new`, is flushed to disk and renamed over it, and only over the file that was opened, as compared on Unix by device and inode just before the rename.  On Unix the new file keeps the old one’s permissions, setuid and setgid included, and the temporary file is owner-only until then.  A link is written through: the temporary file goes beside the file it names.  A device or a FIFO is written in place, through the file already open.  A regular file that a descriptor holds, such as `/dev/stdout` when stdout is a file (any path whose links pass through `/dev/fd`), is written through the descriptor itself, where it stands.  Under `Clobber::Deny` it makes the file with `create_new`, so a file that appears after the check is `PathError::Clobber`, never replaced, and flushes it.  If the write fails it removes the file, on Unix only while the path is still that file, by device and inode.  The temporary file is refused as `PathError::MountRoot` where the mount-root floor refuses a new file.  A failure after the checks is `PathError::Io`, naming the path; after any error the temporary file is removed, if it can be.  The directory is not flushed after the rename.  Under `Allow` the write needs to write the directory, so it fails in some places where `fs::write` would not; the README’s Known limitations lists them (plan-0020, part 2).
+
 ## [0.6.5] - 2026-11-15
 
 ### Added
@@ -73,6 +79,7 @@ The first public release.
 
 These affect only users of the unpublished versions before 0.6.0.
 
+[0.6.6]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.6
 [0.6.5]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.5
 [0.6.4]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.4
 [0.6.3]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.3

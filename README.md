@@ -129,6 +129,36 @@ The two halves of each pair run the same contract checks, so a dry run never dis
 live run about the _contract_ — only an environmental failure at creation time (permissions, a full
 disk, a race, a name the filesystem refuses) can separate them.
 
+### Writing the file: `write_file`
+
+`fs::write` truncates the file before it writes, so a write that fails loses the old file, and under
+`Clobber::Deny` it races with anything that makes the file between the check and the write.
+`write_file` is the write for a tool with no policy of its own: it runs `check_output_file`’s checks
+with `CreateMode::None`, so the parent must already exist, then writes the file without ever leaving
+a half-written file in place of the old one.
+
+- **`Clobber::Allow`** writes a temporary file beside it, flushes it to disk, and renames it over
+  the file, so the old file survives a failed write.  A file the caller cannot write is refused,
+  as `fs::write` refuses it, though a rename could replace it.  On Unix the new file keeps the old
+  one’s permissions.  A link is written through to the file it names.  The rename is made only
+  over the file that was opened, as compared just before it, so a file put in its place meanwhile
+  is kept, and the write refused.  A device or a FIFO, such as `/dev/null`, is written in place,
+  as a stream is.  So is a regular file that a descriptor holds, such as `/dev/stdout` when
+  stdout is a file: any path whose links pass through `/dev/fd` to a regular file is written
+  through the descriptor itself, where it stands.
+- **`Clobber::Deny`** makes the file with `create_new`, so a file that appears after the check is
+  refused (`PathError::Clobber`), never replaced.  If the write fails it removes the file, while
+  that file is still the one it made, as compared just before the removal.
+
+```rust,ignore
+if args.dry_run {
+    check_output_file(&out, mode, clobber)?
+} else {
+    prepare_output_file(&out, mode, clobber)?; // makes the parent, as `mode` permits
+    write_file(&out, &bytes, clobber)?
+}
+```
+
 ### The mount-root floor — unconditional
 
 **No mode, not even `All`, will create a mount point the floor recognizes** (what it does not
@@ -360,17 +390,48 @@ weighing the crate finds them in one place.
   below a missing level sees only `NotFound`.
 - **An output file path that ends in a separator is approved.**  `out.pdf/` and `out.pdf/.` are
   checked as `out.pdf`, so `check_output_file` and `prepare_output_file` approve them, though no
-  file can be written under that spelling; the write then fails.
+  file can be written under that spelling; the write then fails.  On macOS a link spelled `link/`
+  is the exception, since the OS opens the file it names, so `write_file` writes that file.
+- **`write_file` needs to write the directory under `Clobber::Allow`**, since it makes a temporary
+  file there and renames it.  So it fails where `fs::write` would succeed: in a directory the
+  caller cannot write, on another user’s file in a sticky directory such as `/tmp`, on a file
+  mounted on its own, such as a container’s `/etc/hosts`, and for a name within about 20 bytes of
+  the filesystem’s limit.  On Windows it fails too on a file another process holds open without
+  sharing its deletion.  Nor can it replace a file directly at a level the mount-root floor
+  refuses, such as `/mnt/notes.txt` or the top of a volume mounted directly at `/mnt`, since its
+  temporary file would be a new name there (`MountRoot`).
+- **`write_file` makes a new file under `Clobber::Allow`.**  The old file’s owner, extended
+  attributes, and other hard links are not carried over, nor, on Windows, its permissions: the new
+  file has those of a new file in its directory.  The directory is not flushed after the rename,
+  so a power loss soon after may undo the write, leaving the old file.  A crash mid-write leaves
+  the temporary file behind, and, under `Clobber::Deny`, a partial new file.
+- **`write_file` tells files apart by device and inode, and only on Unix.**  The comparison just
+  before the rename, and the one just before a failed `Deny` write removes its file, each leave a
+  moment before the call that follows, since no system call renames or removes only a given
+  file.  On Windows, which has no file identity in the standard library, neither comparison is
+  made: the rename goes over whatever is at the path, and a failed `Deny` write removes its file
+  by name, so a file another write put there in the meantime would be replaced or removed.
+- **`write_file` opens the old file for writing before it replaces it**, so that a file the caller
+  cannot write is refused, as `fs::write` refuses it.  A watcher sees that as a write to the old
+  file, just before the rename replaces it.
+- **A descriptor is written through itself only when it holds a regular file**, so one that is
+  open only for reading is not written, where on Linux `fs::write` would reopen its file for
+  writing.  Anything else it holds is opened through its path, as `fs::write` opens it: on Linux,
+  where that reopens it, a socket cannot be, so `/dev/stdout` fails when stdout is a socket, as
+  under systemd’s `StandardOutput=journal`, while macOS writes it.
 - **On Windows:** there is no `SIGPIPE`, so `reset_sigpipe` does nothing; a volume mounted into an
-  empty NTFS folder is not detected; and the tests do not stage symbolic links, permissions, or a
-  closed pipe there.
+  empty NTFS folder is not detected; `write_file` is untested with a device such as `NUL`, and
+  most likely fails to write one, since the standard library’s file type reports a device there as
+  a file, so it is not written in place; and the tests do not stage symbolic links, permissions, a
+  closed pipe, a FIFO, or a failed write there.
 
 ## Status
 
 Everything above is built and tested on Linux and macOS, the `/Volumes` identity check on macOS
 alone.  On Windows it is built and tested,
 except for the cases the tests stage on Unix only: symbolic links, permissions, a closed pipe, a
-deleted current directory, and a file spelled with a trailing separator.  `ROADMAP.md`, in the
+deleted current directory, a file spelled with a trailing separator, a FIFO, a descriptor, and a
+write that fails.  `ROADMAP.md`, in the
 repository, tracks candidate additions: config discovery and `--show-config`, `--help` section
 builders, a findings accumulator, and a dry-run convention.
 

@@ -9,7 +9,7 @@ use cli_contract::exit::ExitTable;
 use cli_contract::{
     check_destination, check_output_file, ensure_destination, exit, prepare_output_file, presence,
     presence_resolved, reject_symlink, require_input_dir, require_input_path, require_marker,
-    Clobber, CreateMode, DestPolicy, MarkerName, PathError, Presence,
+    write_file, Clobber, CreateMode, DestPolicy, MarkerName, PathError, Presence,
 };
 // Used only by the floor tests, which do not run on Windows.
 #[cfg(not(windows))]
@@ -43,7 +43,7 @@ fn is_root() -> bool {
     // SAFETY: geteuid reads a process attribute and cannot fail.
     let root = unsafe { libc::geteuid() } == 0;
     if root {
-        eprintln!("SKIPPED: running as root, where chmod 000 proves nothing");
+        eprintln!("SKIPPED: running as root, where a permission proves nothing");
     }
     root
 }
@@ -871,6 +871,436 @@ fn the_floor_tests_quote_sentences_the_readme_contains() {
         stale.is_empty(),
         "test comments quote README sentences the README no longer contains: {stale:#?}"
     );
+}
+
+// --- the guarded write -----------------------------------------------------------------------
+//
+// rustdoc of write_file: "Write `contents` to a caller-asserted **output file**, never leaving a
+// half-written file in place of the old one."  A failed write is staged in tests/write_failure.rs,
+// a process of its own.
+
+/// The names in `dir`, sorted, so that a temporary file left behind shows.
+fn names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// rustdoc: "a reader sees the old file or the new one", under `Allow`; under `Deny`, "the file is
+/// made with `create_new`".  Either way the directory then holds the file alone.
+#[test]
+fn write_file_writes_a_new_file_and_nothing_else() {
+    for clobber in [Clobber::Allow, Clobber::Deny] {
+        let d = tempfile::tempdir().unwrap();
+        let out = d.path().join("out.txt");
+        write_file(&out, b"new", clobber).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"new", "{clobber}");
+        assert_eq!(names(d.path()), ["out.txt"], "{clobber}");
+    }
+}
+
+/// A bare relative name has the current directory as its directory, where the temporary file goes.
+#[test]
+#[serial_test::serial]
+fn write_file_writes_a_bare_relative_name() {
+    let d = tempfile::tempdir().unwrap();
+    let _cwd = CwdGuard::set(d.path());
+    std::fs::write(d.path().join("old.txt"), b"old").unwrap();
+    write_file(Path::new("old.txt"), b"new", Clobber::Allow).unwrap();
+    write_file(Path::new("new.txt"), b"new", Clobber::Deny).unwrap();
+    assert_eq!(std::fs::read(d.path().join("old.txt")).unwrap(), b"new");
+    assert_eq!(std::fs::read(d.path().join("new.txt")).unwrap(), b"new");
+    assert_eq!(names(d.path()), ["new.txt", "old.txt"]);
+}
+
+/// rustdoc: "the contents go to a temporary file beside the file, flushed to disk, which is then
+/// renamed over it".
+#[test]
+fn allow_replaces_the_old_file() {
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("out.txt");
+    std::fs::write(&out, b"old, and longer than the new").unwrap();
+    write_file(&out, b"new", Clobber::Allow).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"new");
+    assert_eq!(names(d.path()), ["out.txt"]);
+}
+
+/// README: "`Clobber::Deny` refuses it as the existing file it is."  rustdoc of write_file: "The
+/// checks are [`check_output_file`]'s".
+#[test]
+fn deny_refuses_an_existing_file_and_leaves_it_as_it_was() {
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("out.txt");
+    std::fs::write(&out, b"old").unwrap();
+    let r = write_file(&out, b"new", Clobber::Deny);
+    assert!(
+        matches!(&r, Err(PathError::Clobber(p)) if p == &out),
+        "{r:?}"
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), b"old");
+    assert_eq!(names(d.path()), ["out.txt"]);
+}
+
+/// rustdoc: "The checks are [`check_output_file`]'s, with [`CreateMode::None`], so the parent must
+/// already exist".
+#[test]
+fn write_file_does_not_make_the_parent() {
+    let d = tempfile::tempdir().unwrap();
+    let parent = d.path().join("missing");
+    for clobber in [Clobber::Allow, Clobber::Deny] {
+        let r = write_file(&parent.join("out.txt"), b"new", clobber);
+        assert!(
+            matches!(&r, Err(PathError::MissingDestination(p)) if p == &parent),
+            "{clobber}: {r:?}"
+        );
+        assert!(absent(&parent), "{clobber}: the parent was created");
+    }
+}
+
+/// rustdoc of check_output_file: "A directory in the file's place is [`PathError::NotAFile`]".
+#[test]
+fn write_file_refuses_a_directory_in_the_files_place() {
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("out.txt");
+    std::fs::create_dir(&out).unwrap();
+    for clobber in [Clobber::Allow, Clobber::Deny] {
+        let r = write_file(&out, b"new", clobber);
+        assert!(
+            matches!(&r, Err(PathError::NotAFile(p)) if p == &out),
+            "{clobber}: {r:?}"
+        );
+        assert!(
+            names(&out).is_empty(),
+            "{clobber}: something was written into the directory"
+        );
+    }
+}
+
+/// rustdoc: "made with `create_new`, so it never replaces anything: a name that is taken moves on
+/// to the next `n`."
+#[test]
+fn a_temporary_name_already_taken_is_left_alone() {
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("out.txt");
+    let taken = format!(".out.txt.{}.0.tmp", std::process::id());
+    std::fs::write(d.path().join(&taken), b"another write's").unwrap();
+    write_file(&out, b"new", Clobber::Allow).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"new");
+    assert_eq!(
+        std::fs::read(d.path().join(&taken)).unwrap(),
+        b"another write's"
+    );
+    assert_eq!(names(d.path()), [taken.as_str(), "out.txt"]);
+}
+
+/// rustdoc: "On Unix the new file takes the old one's permissions, setuid and setgid included,
+/// so a private file stays private".  0o4700 has execute bits, which no umask gives a new file,
+/// and setuid, which a write clears, so only a mode kept after the write passes.
+#[cfg(unix)]
+#[test]
+fn allow_keeps_the_old_files_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("private.sh");
+    std::fs::write(&out, b"old").unwrap();
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o4700)).unwrap();
+    write_file(&out, b"new", Clobber::Allow).unwrap();
+    let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(mode, 0o4700, "{mode:o}");
+    assert_eq!(std::fs::read(&out).unwrap(), b"new");
+}
+
+/// rustdoc: "A file the caller cannot write is refused, as [`fs::write`] refuses it, though a
+/// rename could replace it".
+#[cfg(unix)]
+#[test]
+fn allow_refuses_a_file_the_caller_cannot_write() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("read-only.txt");
+    std::fs::write(&out, b"old").unwrap();
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let r = write_file(&out, b"new", Clobber::Allow);
+    assert!(
+        matches!(&r, Err(PathError::Io { path, source })
+            if path == &out && source.kind() == std::io::ErrorKind::PermissionDenied),
+        "{r:?}"
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), b"old");
+    assert_eq!(names(d.path()), ["read-only.txt"]);
+}
+
+/// rustdoc: "A link at the path is written through, as the OS would: the temporary file goes
+/// beside the file the link names, and the link stays."
+#[cfg(unix)]
+#[test]
+fn allow_writes_through_a_link_and_the_link_stays() {
+    let d = tempfile::tempdir().unwrap();
+    let real = d.path().join("real.txt");
+    let link = d.path().join("link.txt");
+    std::fs::write(&real, b"old").unwrap();
+    std::os::unix::fs::symlink("real.txt", &link).unwrap();
+    write_file(&link, b"new", Clobber::Allow).unwrap();
+    let link_type = std::fs::symlink_metadata(&link).unwrap().file_type();
+    assert!(
+        link_type.is_symlink(),
+        "the link was replaced: {link_type:?}"
+    );
+    assert_eq!(std::fs::read(&real).unwrap(), b"new");
+    assert_eq!(names(d.path()), ["link.txt", "real.txt"]);
+}
+
+/// rustdoc: "A path that reaches no regular file to replace, such as `/dev/null` or a FIFO, is
+/// written in place, as a stream is, through the file already open, without truncating or flushing
+/// it".  The reader is opened first, without blocking, so a write that replaced the FIFO instead
+/// fails the test rather than hanging it.
+#[cfg(unix)]
+#[test]
+fn allow_writes_a_fifo_in_place() {
+    use std::io::Read;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+    let d = tempfile::tempdir().unwrap();
+    let fifo = d.path().join("pipe");
+    let c_path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: mkfifo reads a NUL-terminated path that outlives the call.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    let mut reader = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&fifo)
+        .unwrap();
+    write_file(&fifo, b"new", Clobber::Allow).unwrap();
+    // One read, not a read to the end: a child another test spawns meanwhile can hold a copy of
+    // the writer until it execs, and the nonblocking end is not reached while it does.  A
+    // replaced FIFO has no writer, so its read gives nothing, and fails the test.
+    let mut got = [0u8; 16];
+    let n = reader.read(&mut got).unwrap();
+    assert_eq!(&got[..n], b"new");
+    let fifo_type = std::fs::symlink_metadata(&fifo).unwrap().file_type();
+    assert!(fifo_type.is_fifo(), "the FIFO was replaced: {fifo_type:?}");
+    assert_eq!(names(d.path()), ["pipe"]);
+}
+
+/// rustdoc: "the temporary file goes beside the file the link names".  The link's own directory
+/// is read-only, so a temporary file made beside the link instead fails the test.
+#[cfg(unix)]
+#[test]
+fn the_temporary_file_goes_beside_the_file_a_link_names() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let (links, files) = (d.path().join("links"), d.path().join("files"));
+    std::fs::create_dir(&links).unwrap();
+    std::fs::create_dir(&files).unwrap();
+    std::fs::write(files.join("real.txt"), b"old").unwrap();
+    std::os::unix::fs::symlink("../files/real.txt", links.join("out.txt")).unwrap();
+    std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = write_file(&links.join("out.txt"), b"new", Clobber::Allow);
+    std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o755)).unwrap();
+    r.unwrap();
+    assert_eq!(std::fs::read(files.join("real.txt")).unwrap(), b"new");
+    assert_eq!(names(&files), ["real.txt"]);
+    assert_eq!(names(&links), ["out.txt"]);
+}
+
+/// rustdoc: "A path that reaches no regular file to replace, such as `/dev/null` or a FIFO, is
+/// written in place".  A pipe named by `/dev/fd/<n>`, which on Linux is a link into `/proc`, as
+/// `--output /dev/stdout | jq` names one.
+#[cfg(unix)]
+#[test]
+fn a_pipe_named_through_dev_fd_is_written_in_place() {
+    use std::io::Read;
+    use std::os::unix::io::FromRawFd;
+    let mut fds = [0; 2];
+    // SAFETY: pipe writes two descriptors into the array, which outlives the call.
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    // SAFETY: both descriptors are new and owned here alone.
+    let (mut reader, writer) = unsafe {
+        (
+            std::fs::File::from_raw_fd(fds[0]),
+            std::fs::File::from_raw_fd(fds[1]),
+        )
+    };
+    let r = write_file(
+        Path::new(&format!("/dev/fd/{}", fds[1])),
+        b"new",
+        Clobber::Allow,
+    );
+    drop(writer);
+    r.unwrap();
+    let mut got = Vec::new();
+    reader.read_to_end(&mut got).unwrap();
+    assert_eq!(got, b"new");
+}
+
+/// rustdoc: "it is written through the descriptor itself, where it stands, as a write to stdout
+/// would be".  A regular file the test holds open, named as `/dev/fd/<n>` and through a link to
+/// it, as `/dev/stdout` is, with its offset in the middle: the contents go there, the offset moves
+/// past them, and the file is never replaced, on Linux and macOS alike.  A name of digits is one
+/// macOS's `realpath` reads as a descriptor's.
+#[cfg(unix)]
+#[test]
+fn a_descriptor_for_a_file_is_written_where_it_stands() {
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::io::AsRawFd;
+    for name in ["redirected.txt", "20261115"] {
+        for links in 0..3 {
+            let d = tempfile::tempdir().unwrap();
+            let file = d.path().join(name);
+            let mut held = std::fs::File::create(&file).unwrap();
+            held.write_all(b"pre-pre\n").unwrap();
+            held.seek(SeekFrom::Start(4)).unwrap();
+            let mut path = PathBuf::from(format!("/dev/fd/{}", held.as_raw_fd()));
+            for n in 0..links {
+                let link = d.path().join(format!("stdout{n}"));
+                std::os::unix::fs::symlink(&path, &link).unwrap();
+                path = link;
+            }
+            let r = write_file(&path, b"new", Clobber::Allow);
+            let at = held.stream_position().unwrap();
+            let held_inode = held.metadata().unwrap().ino();
+            drop(held);
+            assert!(r.is_ok(), "{name} {path:?}: {r:?}");
+            assert_eq!(
+                std::fs::read(&file).unwrap(),
+                b"pre-new\n",
+                "{name} {path:?}"
+            );
+            assert_eq!(
+                at, 7,
+                "{name} {path:?}: the descriptor's offset did not move"
+            );
+            let inode = std::fs::metadata(&file).unwrap().ino();
+            assert_eq!(inode, held_inode, "{name} {path:?}: the file was replaced");
+            let left = names(d.path());
+            assert!(
+                left.iter().all(|n| !n.ends_with(".tmp")),
+                "{name} {path:?}: {left:?}"
+            );
+        }
+    }
+}
+
+/// rustdoc: "the temporary file goes beside the file the link names", at the end of a chain of
+/// two links with relative targets in other directories.  Both links' directories are read-only,
+/// so a temporary file made beside either link fails the test.
+#[cfg(unix)]
+#[test]
+fn the_temporary_file_goes_beside_the_file_a_chain_of_links_names() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let (links, mid, files) = (
+        d.path().join("links"),
+        d.path().join("mid"),
+        d.path().join("files"),
+    );
+    for dir in [&links, &mid, &files] {
+        std::fs::create_dir(dir).unwrap();
+    }
+    std::fs::write(files.join("real.txt"), b"old").unwrap();
+    std::os::unix::fs::symlink("../mid/b", links.join("a")).unwrap();
+    std::os::unix::fs::symlink("../files/real.txt", mid.join("b")).unwrap();
+    for dir in [&links, &mid] {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    let r = write_file(&links.join("a"), b"new", Clobber::Allow);
+    for dir in [&links, &mid] {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    r.unwrap();
+    assert_eq!(std::fs::read(files.join("real.txt")).unwrap(), b"new");
+    assert_eq!(names(&files), ["real.txt"]);
+    assert_eq!(
+        (names(&links), names(&mid)),
+        (vec!["a".to_string()], vec!["b".to_string()])
+    );
+}
+
+/// rustdoc: "the temporary file goes beside the file the link names", along a chain whose first
+/// link's target ends in a separator, which macOS's `open` follows.  The first link's directory is
+/// read-only, so a temporary file made beside the second link fails the test.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_temporary_file_goes_beside_the_file_at_the_end_of_a_chain() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let (links, sub) = (d.path().join("links"), d.path().join("links/sub"));
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("real.txt"), b"old").unwrap();
+    std::os::unix::fs::symlink("sub/real.txt", links.join("link2")).unwrap();
+    std::os::unix::fs::symlink("link2/", links.join("link1")).unwrap();
+    std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = write_file(&links.join("link1"), b"new", Clobber::Allow);
+    std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o755)).unwrap();
+    r.unwrap();
+    assert_eq!(std::fs::read(sub.join("real.txt")).unwrap(), b"new");
+    assert_eq!(names(&sub), ["real.txt"]);
+}
+
+/// rustdoc: "Nor can a file in a directory the caller cannot write".  The error is the directory's
+/// refusal, never the temporary names reported as taken.
+#[cfg(unix)]
+#[test]
+fn allow_cannot_replace_a_file_in_a_directory_it_cannot_write() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let dir = d.path().join("read-only");
+    std::fs::create_dir(&dir).unwrap();
+    let out = dir.join("out.txt");
+    std::fs::write(&out, b"old").unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = write_file(&out, b"new", Clobber::Allow);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        matches!(&r, Err(PathError::Io { path, source })
+            if path == &out && source.kind() == std::io::ErrorKind::PermissionDenied),
+        "{r:?}"
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), b"old");
+    assert_eq!(names(&dir), ["out.txt"]);
+}
+
+/// README: "`out.pdf/` and `out.pdf/.` are checked as `out.pdf`, so `check_output_file` and
+/// `prepare_output_file` approve them, though no file can be written under that spelling; the
+/// write then fails."  rustdoc of write_file: "After any error it is removed, if it can be".
+#[cfg(unix)]
+#[test]
+fn a_file_spelled_with_a_separator_is_not_written_and_nothing_is_left() {
+    let d = tempfile::tempdir().unwrap();
+    let spelled = d.path().join("out.txt/");
+    for clobber in [Clobber::Allow, Clobber::Deny] {
+        let r = write_file(&spelled, b"new", clobber);
+        assert!(matches!(r, Err(PathError::Io { .. })), "{clobber}: {r:?}");
+        assert!(
+            names(d.path()).is_empty(),
+            "{clobber}: {:?}",
+            names(d.path())
+        );
+    }
+    std::fs::write(d.path().join("out.txt"), b"old").unwrap();
+    let r = write_file(&spelled, b"new", Clobber::Allow);
+    assert!(matches!(r, Err(PathError::Io { .. })), "{r:?}");
+    assert_eq!(std::fs::read(d.path().join("out.txt")).unwrap(), b"old");
+    assert_eq!(names(d.path()), ["out.txt"]);
 }
 
 // --- the exit table ------------------------------------------------------------------------
