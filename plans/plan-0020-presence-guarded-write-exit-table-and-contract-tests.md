@@ -44,14 +44,19 @@ The rustdoc keeps the existing explanation of why there is no `Unknown` variant,
 ### 2.  `paths::write_file`, the guarded write
 
 ```rust
-/// Write `contents` to `path`, never leaving a half-written file in its place.
-/// `Clobber::Deny`: created with `create_new`, so a file that appears after the check is refused
-/// (`PathError::Clobber`), never replaced.  `Clobber::Allow`: written to a temporary file in the
-/// same directory, flushed to disk, then renamed over `path`, so the old file survives a failed write.
+/// Write `contents` to a caller-asserted output file, never leaving a half-written file in place
+/// of the old one.
 pub fn write_file(path: &Path, contents: &[u8], clobber: Clobber) -> Result<(), PathError>;
 ```
 
-It runs `check_output_file`’s checks on the leaf, with `CreateMode::None`, so a caller has already made the parent with `prepare_output_file` when it wanted one made.  A caller with a policy of its own keeps calling `fs` itself; this is the default.
+It runs `check_output_file`’s checks, with `CreateMode::None`, so a caller has already made the parent with `prepare_output_file` when it wanted one made.  A caller with a policy of its own keeps calling `fs` itself; this is the default.
+
+- **`Clobber::Allow`:** written to a temporary file in the same directory, flushed to disk, then renamed over the file, so a reader sees the old file or the new one, and the old file survives a failed write.  On Unix the new file takes the old one’s permissions, so a private file stays private.  A link at the path is written through to the file it names, as the README already says of an output file and as the OS does.  A path that names no regular file to replace, such as `/dev/null` or a FIFO, is written in place, as `fs::write` would.
+- **`Clobber::Deny`:** created with `create_new`, so a file that appears after the check is refused (`PathError::Clobber`), never replaced.  It is written in place, since a rename would replace such a file, and flushed to disk; a write that fails removes the file it made.  So a crash mid-write can leave a partial file where there was none, never in place of an old one.
+
+A failure after the checks is `PathError::Io`, naming the path as given.
+
+_Amended 15-Nov-2026, before part 2:_ the promise is narrowed to “in place of the old one”, since under `Deny` there is no old file, and a crash mid-write can leave the new one partial: `std` has no rename that refuses to replace, and a hard link, the portable way to get one, fails on exFAT and FAT disks.  Three cases the text left out are settled.  A link is written through, not replaced, as the README says of an output file.  A device or a FIFO is written in place, so `--output /dev/null` still works, and a rename never replaces a device node.  On Unix the old file’s permissions are kept, since a rename would otherwise widen a `0600` file to the umask’s default.  Failures reuse `PathError::Io`, whose message already reads “`I/O error creating <path>`”.
 
 ### 3.  `exit::ExitTable`, a built exit table
 
