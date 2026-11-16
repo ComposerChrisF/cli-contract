@@ -27,8 +27,8 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 - [x] **0.6.4 is on crates.io** (15-Nov-2026), tagged `cli-contract-v0.6.4`.  It makes the
   three-state probe public, as `presence` and `presence_resolved` (plan-0020, part 1).
 
-- [ ] **Publish 0.6.5**, which adds `exit::ExitTable`, a tool’s exit-code table built from the
-  codes it returns (plan-0020, part 3).  It waits on the maintainer.
+- [x] **0.6.5 is on crates.io** (15-Nov-2026), tagged `cli-contract-v0.6.5`.  It adds
+  `exit::ExitTable`, a tool’s exit-code table built from the codes it returns (plan-0020, part 3).
 
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
