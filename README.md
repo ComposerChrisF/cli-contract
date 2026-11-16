@@ -390,8 +390,9 @@ weighing the crate finds them in one place.
   below a missing level sees only `NotFound`.
 - **An output file path that ends in a separator is approved.**  `out.pdf/` and `out.pdf/.` are
   checked as `out.pdf`, so `check_output_file` and `prepare_output_file` approve them, though no
-  file can be written under that spelling; the write then fails.  On macOS a link spelled `link/`
-  is the exception, since the OS opens the file it names, so `write_file` writes that file.
+  file can be written under that spelling; the write then fails.  On macOS 15 a link spelled
+  `link/` is the exception: the OS opens the file it names, so `write_file` writes that file.
+  Where the OS refuses the spelling, as Linux does, `write_file` refuses it too.
 - **`write_file` needs to write the directory under `Clobber::Allow`**, since it makes a temporary
   file there and renames it.  So it fails where `fs::write` would succeed: in a directory the
   caller cannot write, on another user’s file in a sticky directory such as `/tmp`, on a file

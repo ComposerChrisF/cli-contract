@@ -1229,28 +1229,48 @@ fn the_temporary_file_goes_beside_the_file_a_chain_of_links_names() {
     );
 }
 
-/// rustdoc: "the temporary file goes beside the file the link names", along a chain whose first
-/// link's target ends in a separator, which macOS's `open` follows.  The first link's directory is
-/// read-only, so a temporary file made beside the second link fails the test.
-#[cfg(target_os = "macos")]
+/// rustdoc: "A link at the path is written through, as the OS would: the temporary file goes beside
+/// the file the link names".  A separator after a link to a file, in the link's own target or in
+/// the spelling of the path: macOS 15 reaches the file, Linux refuses it, and macOS 26 refuses at
+/// least the first, so the OS is asked first, and `write_file` must agree.  Where the OS reaches
+/// the file, the temporary file must go beside it: the links' directory is read-only, so one made
+/// beside a link fails the test.  Where the OS refuses, nothing may change.
+#[cfg(unix)]
 #[test]
-fn the_temporary_file_goes_beside_the_file_at_the_end_of_a_chain() {
+fn a_separator_after_a_link_to_a_file_is_written_as_the_os_reads_it() {
     use std::os::unix::fs::PermissionsExt;
     if is_root() {
         return;
     }
-    let d = tempfile::tempdir().unwrap();
-    let (links, sub) = (d.path().join("links"), d.path().join("links/sub"));
-    std::fs::create_dir_all(&sub).unwrap();
-    std::fs::write(sub.join("real.txt"), b"old").unwrap();
-    std::os::unix::fs::symlink("sub/real.txt", links.join("link2")).unwrap();
-    std::os::unix::fs::symlink("link2/", links.join("link1")).unwrap();
-    std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o555)).unwrap();
-    let r = write_file(&links.join("link1"), b"new", Clobber::Allow);
-    std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o755)).unwrap();
-    r.unwrap();
-    assert_eq!(std::fs::read(sub.join("real.txt")).unwrap(), b"new");
-    assert_eq!(names(&sub), ["real.txt"]);
+    for spelling in ["link1", "link2/"] {
+        let d = tempfile::tempdir().unwrap();
+        let (links, sub) = (d.path().join("links"), d.path().join("links/sub"));
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("real.txt"), b"old").unwrap();
+        std::os::unix::fs::symlink("sub/real.txt", links.join("link2")).unwrap();
+        std::os::unix::fs::symlink("link2/", links.join("link1")).unwrap();
+        let path = links.join(spelling);
+        let os_reaches_the_file = match std::fs::metadata(&path) {
+            Ok(meta) => {
+                assert!(meta.is_file(), "{spelling}: {meta:?}");
+                true
+            }
+            Err(e) if e.raw_os_error() == Some(libc::ENOTDIR) => false,
+            Err(e) => panic!("{spelling}: {e}"),
+        };
+        std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let r = write_file(&path, b"new", Clobber::Allow);
+        std::fs::set_permissions(&links, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(r.is_ok(), os_reaches_the_file, "{spelling}: {r:?}");
+        let want: &[u8] = if os_reaches_the_file { b"new" } else { b"old" };
+        assert_eq!(
+            std::fs::read(sub.join("real.txt")).unwrap(),
+            want,
+            "{spelling}"
+        );
+        assert_eq!(names(&sub), ["real.txt"], "{spelling}");
+        assert_eq!(names(&links), ["link1", "link2", "sub"], "{spelling}");
+    }
 }
 
 /// rustdoc: "Nor can a file in a directory the caller cannot write".  The error is the directory's
