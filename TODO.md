@@ -89,6 +89,10 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 
 ## Smaller items
 
+- [ ] **`dry_run_writes_nothing` names a `tree` that is not a directory with a trailing
+  separator** (`…/a.txt/`), since its walk reads `tree.join("")`.  Cosmetic: the message still
+  names the path and fails the test.
+
 - [ ] **The leak gate trusts a lowered floor.**  It reads `bugs/FLOOR` and `plans/FLOOR` from the
   index, so one commit can lower a floor and cite the IDs that newly pass.  A floor is never
   lowered, so the gate could compare the index’s floor with `HEAD`’s and stop on a lower one.

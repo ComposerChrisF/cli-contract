@@ -377,9 +377,12 @@ With `testing`, a tool’s integration tests run its built binary through four c
 and `closed_stderr` run it with the stream refusing every write, as a pipe does once its reader has
 gone (§ 3), and assert that it did not panic; `dry_run_writes_nothing` asserts that a dry run left a
 directory tree as it was; and `help_has_exit_table` asserts that `--help` prints its
-`ExitTable`.  Each also fails the test on an exit code the table does not list.  A tool that writes
-its messages with `eprintln!` fails `closed_stderr`, so adopt that one as a ratchet: a new tool
-passes it from the start, and an old one once its messages no longer go through `eprintln!`.
+`ExitTable`.  Each also fails the test on an exit code the table does not list.  They aid a tool’s
+author and assume good faith: each catches the mistake a well-meaning tool makes by accident, and
+none tries to catch a tool that hides a change on purpose.  A tool that writes its messages with
+`eprintln!` fails `closed_stderr` on a command that writes a message, so adopt that one as a
+ratchet: a new tool passes it from the start, and an old one once its messages no longer go through
+`eprintln!`.
 
 ## Known limitations
 

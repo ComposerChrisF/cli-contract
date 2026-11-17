@@ -2,6 +2,12 @@
 //! not crash it, a dry run writes nothing, and `--help` carries its exit table.  Behind the
 //! `testing` feature, which adds no dependency.
 //!
+//! The helpers aid a tool's author, and assume that the tool and its tests act in good faith.  Each
+//! catches the mistake a well-meaning tool makes by accident, such as a dry run that still writes,
+//! or an `eprintln!` that panics once stderr's reader has gone.  None tries to catch a tool that
+//! hides a change on purpose, or a case too unlikely to arise in a real tool's tests: such a gap is
+//! stated as a limitation, never closed with code.
+//!
 //! Each runs the tool as a [`Command`] — for a binary in the same package,
 //! `Command::new(env!("CARGO_BIN_EXE_<name>"))` — and panics, naming the command and what broke,
 //! when the tool does not keep the contract, as `assert!` does.  Each also checks the exit code it
@@ -32,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use crate::exit::ExitTable;
-use crate::paths::{presence_resolved, PathError, Presence};
+use crate::paths::{presence_resolved, Presence};
 
 /// The exit code of a Rust program that panicked.
 const PANICKED: i32 = 101;
@@ -40,8 +46,10 @@ const PANICKED: i32 = 101;
 /// Run `cmd` with its stdout a stream that refuses every write, as a pipe does once its reader has
 /// gone (`tool | head` after `head` has exited), and assert that the tool did not panic.  It passes
 /// when the tool exits with a code `table` lists, or, on Unix, when `SIGPIPE` ends it, as it ends a
-/// tool that calls [`reset_sigpipe`](crate::reset_sigpipe).  Give it a command that writes to
-/// stdout, or it passes without testing anything.
+/// tool that calls [`reset_sigpipe`](crate::reset_sigpipe).  Elsewhere `reset_sigpipe` does
+/// nothing, so a tool that relies on it alone panics on that write and fails this (see the
+/// README's BrokenPipe section).  Give it a command that writes to stdout, or it passes without
+/// testing anything.
 ///
 /// On Unix the stream is a socket whose writing side is shut down before the tool starts, so its
 /// first write fails, with `EPIPE` and `SIGPIPE`, as a write to a pipe with no reader does, whoever
@@ -66,8 +74,9 @@ pub fn closed_stdout(cmd: &mut Command, table: &ExitTable) -> Output {
 /// [`closed_stdout`] for stderr: run `cmd` with its stderr a stream that refuses every write, as
 /// `tool 2> >(true)` leaves it once `true` has exited, and assert that the tool did not panic.
 /// `eprintln!` panics on that write, so a tool that writes its messages with it fails this; one
-/// that writes them with `let _ = writeln!(std::io::stderr(), …)` passes.  Sets the command's
-/// stdin (empty), stdout (captured), and stderr.
+/// that writes them with `let _ = writeln!(std::io::stderr(), …)` passes.  Give it a command that
+/// writes to stderr, such as one that fails or warns, or it passes without testing anything.  Sets
+/// the command's stdin (empty), stdout (captured), and stderr.
 ///
 /// # Panics
 ///
@@ -83,28 +92,28 @@ pub fn closed_stderr(cmd: &mut Command, table: &ExitTable) -> Output {
 /// Snapshot the directory `tree`, run `cmd`, and assert that the run changed nothing in it: no
 /// path added or removed, and each the same type, and for a file the same size and bytes, for a
 /// link the same target.  The tool must exit with a code `table` lists, without panicking.  Give
-/// `cmd` the tool's dry-run flag and targets inside `tree`.  A link at `tree` itself is followed,
+/// `cmd` the tool's dry-run flag and targets inside `tree`, and fill `tree` so that the live run
+/// would change it, or this passes without testing anything.  A link at `tree` itself is followed,
 /// since the caller named it; links below it are compared as links, never followed, so a change
-/// outside `tree` is not seen.  The changes are reported first, with how the run ended, even when
-/// it also exited with a code `table` does not list or panicked.  A run that removes `tree`, or
-/// puts something other than a directory or a link to one in its place, is reported as removing
-/// everything in it.  A link put there is followed too, so a run that moves `tree` and links its
-/// name to the new place is not seen.  Sets the command's stdin (empty), stdout, and stderr
-/// (captured).
+/// outside `tree` is not seen.  Nor is any other write outside `tree`, so point the tool's own
+/// state, such as a ledger or a cache, inside it too, as by setting `HOME`, or the variable that
+/// names the tool's config, to a directory there.  The changes are reported first, with how the run
+/// ended, even when it also exited with a code `table` does not list or panicked.  A run that
+/// removes `tree` is reported as removing everything in it.  A link put in its place is followed,
+/// so a run that moves `tree` and links its name to the new place is not seen.  Sets the command's
+/// stdin (empty), stdout, and stderr (captured).
 ///
 /// # Panics
 ///
 /// When the run changed `tree`, naming each path added, removed, or changed, `tree` itself as
 /// `.`; when the tool panics, exits with a code `table` does not list, or is ended by a signal;
-/// when the tool cannot be run; and when `tree` does not exist, is not a directory (a link to
-/// nothing included), or cannot be read.  A read that fails after the run names the run and how it
-/// ended.
+/// when the tool cannot be run; and when `tree` does not exist, is not a directory, or cannot be
+/// read.  A read that fails after the run names the run and how it ended.
 #[track_caller]
 pub fn dry_run_writes_nothing(cmd: &mut Command, tree: &Path, table: &ExitTable) -> Output {
     let before = match snapshot(tree) {
         Ok(Tree::Dir(entries)) => entries,
         Ok(Tree::Gone) => panic!("{} does not exist", tree.display()),
-        Ok(Tree::NotADirectory(what)) => panic!("{} {what}", tree.display()),
         Err(why) => panic!("{why}"),
     };
     cmd.stdin(Stdio::null())
@@ -114,7 +123,6 @@ pub fn dry_run_writes_nothing(cmd: &mut Command, tree: &Path, table: &ExitTable)
     let after = match snapshot(tree) {
         Ok(Tree::Dir(entries)) => entries,
         Ok(Tree::Gone) => BTreeMap::new(),
-        Ok(Tree::NotADirectory(_)) => BTreeMap::from([(PathBuf::new(), Entry::NotADirectory)]),
         Err(why) => panic!(
             "after {}, a dry run, which ended with {}, {why}",
             describe(cmd),
@@ -150,9 +158,10 @@ pub fn dry_run_writes_nothing(cmd: &mut Command, tree: &Path, table: &ExitTable)
 /// that gives the table to clap's `after_long_help`.  Clap's `wrap_help` feature wraps that text,
 /// at 100 columns when stdout is not a terminal, so with it each line of the table must fit in
 /// 100 columns; a meaning that spans lines is indented under its first.  Adds `--help` to the
-/// command's arguments, so a subcommand's help is tested by naming the subcommand first.  Sets the
-/// command's stdin (empty), stdout, and stderr (captured), and removes `COLUMNS` from its
-/// environment, from which clap would take a width of its own.
+/// command's arguments, so a subcommand's help is tested by naming the subcommand first.  The
+/// command keeps it, so give a helper run after this one a command of its own.  Sets the command's
+/// stdin (empty), stdout, and stderr (captured), and removes `COLUMNS` from its environment, from
+/// which clap would take a width of its own.
 ///
 /// # Panics
 ///
@@ -304,10 +313,6 @@ fn socket_pair_refusing_writes() -> (std::os::unix::io::OwnedFd, std::os::unix::
 fn check(cmd: &Command, output: &Output, table: &ExitTable, when: &str, sigpipe_ends: bool) {
     let what = describe(cmd);
     match output.status.code() {
-        Some(PANICKED) if table.lists(101) => panic!(
-            "{what} exited 101 {when}: it panicked, since 101 is a Rust panic's code, though its \
-             exit table lists it; give that condition another code"
-        ),
         Some(PANICKED) => panic!("{what} exited 101 {when}: it panicked"),
         Some(code) => assert!(
             u8::try_from(code).is_ok_and(|code| table.lists(code)),
@@ -342,8 +347,6 @@ enum Entry {
     Link(PathBuf),
     /// Anything else (a FIFO, a socket, a device): its type alone.
     Other(fs::FileType),
-    /// The root, after a run that left something other than a directory there.
-    NotADirectory,
 }
 
 /// What stands at a snapshot's root.
@@ -352,8 +355,6 @@ enum Tree {
     Dir(BTreeMap<PathBuf, Entry>),
     /// Provably nothing: `NotFound`, and nothing else.
     Gone,
-    /// Something other than a directory, as the message says it.
-    NotADirectory(&'static str),
 }
 
 /// Snapshot `root`, following a link there, as [`presence_resolved`] does; links below it are not
@@ -361,12 +362,7 @@ enum Tree {
 fn snapshot(root: &Path) -> Result<Tree, String> {
     match presence_resolved(root) {
         Ok(Presence::Absent) => return Ok(Tree::Gone),
-        Ok(Presence::Present(file_type)) if file_type.is_dir() => {}
-        Ok(Presence::Present(_)) => return Ok(Tree::NotADirectory("is not a directory")),
-        // A link to nothing at the root itself; one above it is named by the error instead.
-        Err(PathError::DanglingSymlink(link)) if link == root => {
-            return Ok(Tree::NotADirectory("is a link to nothing"))
-        }
+        Ok(Presence::Present(_)) => {}
         Err(e) => return Err(e.to_string()),
     }
     let mut entries = BTreeMap::from([(PathBuf::new(), Entry::Dir)]);

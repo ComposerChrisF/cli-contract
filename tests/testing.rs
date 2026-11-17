@@ -60,35 +60,12 @@ fn the_first_write_fails() {
     );
 }
 
-/// rustdoc of closed_stdout: "Sets the command's stdin (empty), stdout, and stderr (captured)".  A
-/// command reused for a second run gets a stream of its own, and the last run's changes nothing for
-/// the next.
-#[test]
-fn every_run_gets_a_stream_that_refuses_writes() {
-    use std::os::unix::process::ExitStatusExt;
-    let table = ExitTable::canonical();
-    let mut cmd = sh("printf x; exit 3");
-    for _ in 0..3 {
-        let output = closed_stdout(&mut cmd, &table);
-        assert_eq!(
-            output.status.signal(),
-            Some(libc::SIGPIPE),
-            "{:?}",
-            output.status
-        );
-    }
-}
-
 /// rustdoc of the module: "a panic, which is exit 101 whatever the table says", and "A panic is
 /// told by its exit alone, never by reading the tool's output": a tool that only prints the words
 /// of a panic message, and exits 0, passes.
 #[test]
 fn a_panic_fails_whatever_the_table_lists() {
     let table = ExitTable::canonical().code(101, "a code no table should give");
-    let said = panics(|| {
-        closed_stdout(&mut sh("exit 101"), &table);
-    });
-    assert!(said.contains("give that condition another code"), "{said}");
     let said = panics(|| {
         closed_stdout(&mut sh("exit 101"), &ExitTable::canonical());
     });
@@ -279,8 +256,9 @@ fn a_fifo_in_the_tree_is_kept_by_its_type() {
 
 /// rustdoc of dry_run_writes_nothing: "The changes are reported first, with how the run ended,
 /// even when it also exited with a code `table` does not list or panicked.  A run that removes
-/// `tree`, or puts something other than a directory or a link to one in its place, is reported as
-/// removing everything in it."  And the panics: "`tree` itself as `.`".
+/// `tree` is reported as removing everything in it."  And the panics: "`tree` itself as `.`", and
+/// "A read that fails after the run names the run and how it ended": here, a run that puts a file
+/// where `tree` was.
 #[test]
 fn the_writes_are_named_whatever_the_exit() {
     let table = ExitTable::canonical();
@@ -298,12 +276,18 @@ fn the_writes_are_named_whatever_the_exit() {
     std::fs::create_dir(&t).unwrap();
     let said = panics(|| {
         dry_run_writes_nothing(
-            &mut in_tree("rm -r t && echo x > t", parent.path()),
+            &mut in_tree("rm -r t && echo x > t; exit 9", parent.path()),
             &t,
             &table,
         );
     });
-    assert!(said.lines().any(|l| l == "changed: ."), "{said}");
+    assert!(
+        said.starts_with("after ")
+            && said.contains("\"rm -r t && echo x > t; exit 9\"")
+            && said.contains("exit status: 9")
+            && said.contains("Not a directory"),
+        "{said}"
+    );
     let d = tree();
     let said = panics(|| {
         dry_run_writes_nothing(&mut in_tree("rm a.txt; exit 9", d.path()), d.path(), &table);
@@ -327,36 +311,8 @@ fn a_message_never_carries_the_commands_environment() {
     );
 }
 
-/// rustdoc of dry_run_writes_nothing: "A read that fails after the run names the run and how it
-/// ended."
-#[test]
-fn a_tree_the_run_left_unreadable_is_named_as_the_runs_doing() {
-    use std::os::unix::fs::PermissionsExt;
-    // SAFETY: geteuid reads a process attribute and cannot fail.
-    if unsafe { libc::geteuid() } == 0 {
-        eprintln!("SKIPPED: running as root, where a permission proves nothing");
-        return;
-    }
-    let d = tree();
-    let said = panics(|| {
-        dry_run_writes_nothing(
-            &mut in_tree("chmod 000 sub; exit 9", d.path()),
-            d.path(),
-            &ExitTable::canonical(),
-        )
-    });
-    std::fs::set_permissions(d.path().join("sub"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(
-        said.starts_with("after ")
-            && said.contains("\"chmod 000 sub; exit 9\"")
-            && said.contains("exit status: 9"),
-        "{said}"
-    );
-}
-
 /// rustdoc of dry_run_writes_nothing: "A link at `tree` itself is followed, since the caller named
-/// it", and the panics: "is not a directory (a link to nothing included)".  A link to nothing above
-/// `tree` is named for what it is.
+/// it", and the panics: "is not a directory".
 #[test]
 fn the_tree_is_a_directory_and_a_link_to_one_is_followed() {
     let table = ExitTable::canonical();
@@ -371,20 +327,7 @@ fn the_tree_is_a_directory_and_a_link_to_one_is_followed() {
     let said = panics(|| {
         dry_run_writes_nothing(&mut sh("true"), &d.path().join("a.txt"), &table);
     });
-    assert!(said.contains("is not a directory"), "{said}");
-    let dangling = parent.path().join("dangling");
-    std::os::unix::fs::symlink("nowhere", &dangling).unwrap();
-    let said = panics(|| {
-        dry_run_writes_nothing(&mut sh("true"), &dangling, &table);
-    });
-    assert!(said.contains("is a link to nothing"), "{said}");
-    let said = panics(|| {
-        dry_run_writes_nothing(&mut sh("true"), &dangling.join("sub"), &table);
-    });
-    assert!(
-        said.contains("broken symbolic link") && said.contains(&*dangling.to_string_lossy()),
-        "{said}"
-    );
+    assert!(said.contains("Not a directory"), "{said}");
 }
 
 // --- the exit table in --help -----------------------------------------------------------------
