@@ -30,10 +30,10 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
 - [x] **0.6.5 is on crates.io** (15-Nov-2026), tagged `cli-contract-v0.6.5`.  It adds
   `exit::ExitTable`, a tool’s exit-code table built from the codes it returns (plan-0020, part 3).
 
-- [ ] **Publish 0.6.7**, which adds `write_file`, the guarded write (plan-0020, part 2), and the
-  `testing` feature, the shared contract tests (part 4, the last).  0.6.6 was held, by the
-  maintainer’s choice on 16-Nov-2026, to go out with part 4, so it is never published on its own.
-  It waits on the maintainer.
+- [x] **0.6.7 is on crates.io** (16-Nov-2026), tagged `cli-contract-v0.6.7`.  It adds
+  `write_file`, the guarded write (plan-0020, part 2), and the `testing` feature, the shared
+  contract tests (part 4, the last).  0.6.6 was held, by the maintainer’s choice on 16-Nov-2026, to
+  go out with part 4, so it was never published on its own.
 
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
