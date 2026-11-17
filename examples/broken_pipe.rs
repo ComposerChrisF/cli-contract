@@ -32,6 +32,10 @@ fn main() -> io::Result<()> {
         }
         _ => {
             eprintln!("usage: broken_pipe list|work");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "plan-0024: an example returns ExitCode from main"
+            )]
             std::process::exit(exit::USAGE.into());
         }
     }

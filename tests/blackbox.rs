@@ -2,6 +2,21 @@
 //!
 //! Every test here cites the sentence it pins.  None of it reads the implementation: where a
 //! test fails, either the code or the sentence is wrong, and the test does not decide which.
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::disallowed_methods,
+        reason = "Unix-only tests build fixtures in a temp dir with create_dir_all, and a child run exits before the harness writes into its closed pipe"
+    )
+)]
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "a guard restoring the cwd or a mode has nowhere to report a failure, and a should_panic test never gets the value it discards"
+)]
+#![expect(
+    clippy::string_slice,
+    reason = "the slice ends at an index that find returned"
+)]
 
 use std::path::{Path, PathBuf};
 

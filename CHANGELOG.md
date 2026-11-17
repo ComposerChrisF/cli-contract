@@ -4,6 +4,12 @@ All notable changes to `cli-contract` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.6.8] - 2026-11-17
+
+### Changed
+
+- **The minimum Rust version is now 1.81**, up from 1.79.  1.81 stabilized `#[expect]` and a lint’s `reason`, which the crate’s own code now uses for every lint it suppresses.  A project on Rust 1.79 or 1.80 can stay on 0.6.7.
+
 ## [0.6.7] - 2026-11-16
 
 ### Added
@@ -80,6 +86,7 @@ The first public release.
 
 These affect only users of the unpublished versions before 0.6.0.
 
+[0.6.8]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.8
 [0.6.7]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.7
 [0.6.5]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.5
 [0.6.4]: https://github.com/ComposerChrisF/cli-contract/releases/tag/cli-contract-v0.6.4

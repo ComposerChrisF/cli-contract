@@ -35,6 +35,14 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   contract tests (part 4, the last).  0.6.6 was held, by the maintainer’s choice on 16-Nov-2026, to
   go out with part 4, so it was never published on its own.
 
+- [ ] **Publish 0.6.8**, which raises the minimum Rust version to 1.81, for the `#[expect]`
+  attributes the lint set asks for (`[lints.clippy]` in `Cargo.toml`, with `clippy.toml`).  It
+  waits on the maintainer, who may call it 0.7.0 instead.  Cargo’s SemVer guide files a raised
+  minimum Rust version as possibly-breaking, and recommends treating it as a minor change, which
+  in a 0.y.z crate is a z bump, as here.  But the Cargo of Rust 1.79 and 1.80 resolves without
+  reading `rust-version`, so a project there that runs `cargo update` would take 0.6.8 and fail
+  to build.
+
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
   tested against both.  A table test over both, or one walk they share.
@@ -87,7 +95,19 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   nothing, metadata included**: `dry_run_writes_nothing` also compares permissions and a regular
   file’s modification time.  It grows a public test API’s contract.
 
+- [ ] [plan-0024](plans/plan-0024-the-examples-return-exitcode-from-main.md) — **the examples
+  return `ExitCode` from `main`**: `broken_pipe`, `destination`, and `inputs` end with
+  `process::exit`, which the lint set in `clippy.toml` refuses, so they teach the call it refuses.
+  Each call carries an `#[expect]` naming this plan.
+
 ## Smaller items
+
+- [ ] **CI runs clippy on Linux only**, so nothing checks the suppressions compiled only off Unix:
+  the two `cfg_attr(not(unix), expect(unused_mut, …))` in `tests/check_equals_ensure.rs`, and the
+  `expect` on the non-Unix `run_with_writes_refused` in `src/testing.rs`.  A clippy step with
+  `--target x86_64-pc-windows-msvc` would check them, once the toolchain step installs that
+  target.  Under `-D warnings` it would first fail on `src/testing.rs`’s test module, whose
+  `use super::*` is unused off Unix, since every test in it is `cfg(unix)`.
 
 - [ ] **`dry_run_writes_nothing` names a `tree` that is not a directory with a trailing
   separator** (`…/a.txt/`), since its walk reads `tree.join("")`.  Cosmetic: the message still

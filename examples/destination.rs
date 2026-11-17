@@ -46,6 +46,10 @@ fn main() {
     // A marker with a creating mode is wrong on its face: exit 2.
     let policy = DestPolicy::from_flags(mode, marker).unwrap_or_else(|e| {
         eprintln!("error: {e}");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "plan-0024: an example returns ExitCode from main"
+        )]
         std::process::exit(e.exit_code().into());
     });
     // The same contract verdicts either way; only the live run writes.
@@ -56,6 +60,10 @@ fn main() {
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "plan-0024: an example returns ExitCode from main"
+        )]
         std::process::exit(e.exit_code().into());
     }
     if dry_run {
@@ -65,6 +73,10 @@ fn main() {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "plan-0024: an example returns ExitCode from main"
+)]
 fn usage(message: &str) -> ! {
     eprintln!("error: {message}");
     eprintln!(

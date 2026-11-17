@@ -101,6 +101,10 @@ mod tests {
         reset_sigpipe();
         // SAFETY: `fds[1]` is the write end just created, owned by this `File` alone.
         let mut writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "the write is meant to end the process by SIGPIPE, so its result is never reached"
+        )]
         let _ = writer.write_all(b"no one is reading");
     }
 

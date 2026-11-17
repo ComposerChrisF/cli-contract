@@ -162,6 +162,10 @@ impl ExitTable {
             code <= SETUP,
             "exit code {code} is not canonical, so its lines go in code()"
         );
+        #[expect(
+            clippy::expect_used,
+            reason = "the assert above keeps code within 0 to 4, canonical() holds all five, and no method removes a code"
+        )]
         let meaning = self
             .codes
             .get_mut(&code)

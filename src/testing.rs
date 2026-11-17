@@ -111,6 +111,10 @@ pub fn closed_stderr(cmd: &mut Command, table: &ExitTable) -> Output {
 /// read.  A read that fails after the run names the run and how it ended.
 #[track_caller]
 pub fn dry_run_writes_nothing(cmd: &mut Command, tree: &Path, table: &ExitTable) -> Output {
+    #[expect(
+        clippy::panic,
+        reason = "a test helper fails its test by panicking, as assert! does, and says so under # Panics"
+    )]
     let before = match snapshot(tree) {
         Ok(Tree::Dir(entries)) => entries,
         Ok(Tree::Gone) => panic!("{} does not exist", tree.display()),
@@ -120,6 +124,10 @@ pub fn dry_run_writes_nothing(cmd: &mut Command, tree: &Path, table: &ExitTable)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let output = run(cmd);
+    #[expect(
+        clippy::panic,
+        reason = "a test helper fails its test by panicking, as assert! does, and says so under # Panics"
+    )]
     let after = match snapshot(tree) {
         Ok(Tree::Dir(entries)) => entries,
         Ok(Tree::Gone) => BTreeMap::new(),
@@ -185,6 +193,10 @@ pub fn help_has_exit_table(cmd: &mut Command, table: &ExitTable) -> Output {
     );
     let help = String::from_utf8_lossy(&output.stdout);
     let rendered = table.render();
+    #[expect(
+        clippy::panic,
+        reason = "a test helper fails its test by panicking, as assert! does, and says so under # Panics"
+    )]
     if !help.contains(&rendered) {
         let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
         let respaced = if words(&help).contains(&words(&rendered)) {
@@ -214,6 +226,10 @@ fn describe(cmd: &Command) -> String {
     use std::fmt::Write as _;
     let mut line = format!("{:?}", cmd.get_program());
     for arg in cmd.get_args() {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "writing to a String cannot fail"
+        )]
         let _ = write!(line, " {arg:?}");
     }
     match cmd.get_current_dir() {
@@ -224,6 +240,10 @@ fn describe(cmd: &Command) -> String {
 
 /// Run `cmd`, or panic naming it.
 #[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a test helper fails its test by panicking, as assert! does"
+)]
 fn run(cmd: &mut Command) -> Output {
     match cmd.output() {
         Ok(output) => output,
@@ -248,6 +268,10 @@ fn run_with_writes_refused(cmd: &mut Command, stream: Stream) -> Output {
 /// Run `cmd` with `stream` a pipe whose reader is dropped as soon as the tool has started.
 #[cfg(not(unix))]
 #[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a test helper fails its test by panicking, as assert! does"
+)]
 fn run_with_writes_refused(cmd: &mut Command, stream: Stream) -> Output {
     match stream {
         Stream::Stdout => cmd.stdout(Stdio::piped()),
@@ -310,6 +334,10 @@ fn socket_pair_refusing_writes() -> (std::os::unix::io::OwnedFd, std::os::unix::
 /// Assert that a run did not panic and ended with a code `table` lists, or, where `sigpipe_ends`
 /// allows, by `SIGPIPE`.
 #[track_caller]
+#[expect(
+    clippy::panic,
+    reason = "a test helper fails its test by panicking, as assert! does"
+)]
 fn check(cmd: &Command, output: &Output, table: &ExitTable, when: &str, sigpipe_ends: bool) {
     let what = describe(cmd);
     match output.status.code() {

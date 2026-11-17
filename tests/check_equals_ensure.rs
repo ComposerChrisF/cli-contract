@@ -19,6 +19,10 @@
 //! both clobber policies, and the same five spellings.  The four assertions are the same, with
 //! `check_output_file` and `prepare_output_file` in place of the destination pair, and in 3 the
 //! file's parent is the directory left there.
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "a Drop guard restoring a mode or the cwd has nowhere to report a failure"
+)]
 
 use cli_contract::{
     check_destination, check_output_file, ensure_destination, prepare_output_file, Clobber,
@@ -57,7 +61,10 @@ enum Shape {
 
 impl Shape {
     fn all(privileged: bool) -> Vec<Shape> {
-        #[cfg_attr(not(unix), allow(unused_mut))] // only the Unix shapes extend it
+        #[cfg_attr(
+            not(unix),
+            expect(unused_mut, reason = "only the Unix shapes extend it")
+        )]
         let mut v = vec![Shape::Absent, Shape::File, Shape::Dir];
         #[cfg(unix)]
         {
@@ -170,7 +177,10 @@ impl Fixture {
         fs::create_dir(&ws).unwrap();
         fs::create_dir(ws.join("tdir")).unwrap();
         fs::write(ws.join("tfile"), b"t").unwrap();
-        #[cfg_attr(not(unix), allow(unused_mut))] // only the Unix shapes change it
+        #[cfg_attr(
+            not(unix),
+            expect(unused_mut, reason = "only the Unix shapes change it")
+        )]
         let mut fx = Fixture {
             _tmp: tmp,
             ws,

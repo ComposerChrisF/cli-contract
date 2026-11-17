@@ -43,7 +43,7 @@ jobs:
           CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.79.0"
+          toolchain: "1.81.0"
       - run: cargo check --no-default-features
       - run: cargo check --all-features
 
@@ -84,7 +84,7 @@ jobs:
       - name: tarball holds only the allowlist
         run: |
           list=$(cargo package --list)
-          unexpected=$(printf '%s\n' "$list" | grep -v -E '^(src/.+|examples/.+|README\.md|CHANGELOG\.md|SECURITY\.md|LICENSE-.+|Cargo\.toml|Cargo\.toml\.orig|Cargo\.lock|\.cargo_vcs_info\.json)$' || true)
+          unexpected=$(printf '%s\n' "$list" | grep -v -E '^(src/.+|examples/.+|README\.md|CHANGELOG\.md|SECURITY\.md|LICENSE-.+|Cargo\.toml|clippy\.toml|Cargo\.toml\.orig|Cargo\.lock|\.cargo_vcs_info\.json)$' || true)
           if [ -n "$unexpected" ]; then
             printf 'not in the allowlist:\n%s\n' "$unexpected"
             exit 1

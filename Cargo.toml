@@ -1,13 +1,15 @@
 [package]
 name = "cli-contract"
-version = "0.6.7"
+version = "0.6.8"
 edition = "2021"
 # The tarball is an allowlist, so a new file is not shipped unless named here;
 # CI's package job checks the list.
-include = ["src/**", "examples/**", "README.md", "CHANGELOG.md", "SECURITY.md", "LICENSE-*", "Cargo.toml"]
-# 1.79 stabilized `std::path::absolute`, which the mount-root floor needs to compare the components
-# the OS will actually resolve rather than the caller's spelling (see `is_mount_root`).
-rust-version = "1.79"
+include = ["src/**", "examples/**", "README.md", "CHANGELOG.md", "SECURITY.md", "LICENSE-*", "Cargo.toml", "clippy.toml"]
+# 1.81 stabilized `#[expect]` and a lint's `reason`, which every suppression in the crate uses.
+# Before it, 1.79 stabilized `std::path::absolute`, which the mount-root floor needs to compare
+# the components the OS will actually resolve rather than the caller's spelling (see
+# `is_mount_root`).
+rust-version = "1.81"
 description = "A shared contract for command-line tools: canonical exit codes, a path contract that refuses to guess (with a mount-root floor), and BrokenPipe handling."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ComposerChrisF/cli-contract"
@@ -37,3 +39,25 @@ tempfile = "3"
 # `set_current_dir` is process-global; cargo runs tests in parallel threads, so the cwd-dependent
 # floor tests must serialize or they race each other.
 serial_test = "3"
+
+# house-lints v2 (2026-11-16) — the [lints] table, to paste into Cargo.toml.
+# A single crate: paste as is.  A workspace: rename the table to
+# [workspace.lints.clippy] in the root manifest, and put `[lints] workspace = true`
+# in each member.  Every level is "warn".  In a repo whose gate denies warnings,
+# each standing site carries an #[expect] naming the bug or plan that records it;
+# elsewhere it stays a warning, recorded in a cleanup plan.  Review refuses new ones.  The canonical copy lives in Chris's coding hub, under
+# house-lints/.
+
+[lints.clippy]
+# Every suppression says why, and an #[expect] warns once its lint stops firing.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# No panics on input in production code (tests are allowed by clippy.toml).
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+# Each of these caught a filed bug in the 2026-11-14 census.
+string_slice = "warn"
+let_underscore_must_use = "warn"
+undocumented_unsafe_blocks = "warn"
+# disallowed_methods is on by default; its list is clippy.toml.

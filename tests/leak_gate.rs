@@ -8,6 +8,14 @@
 //! The leaking strings are assembled at run time, never spelled out here, so this file does not
 //! itself trip the gate it tests.
 #![cfg(unix)]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures in a temp dir with create_dir_all"
+)]
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "a Drop guard restoring a mode has nowhere to report a failure"
+)]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

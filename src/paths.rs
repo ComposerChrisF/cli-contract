@@ -840,6 +840,10 @@ fn create_after_check(dir: &Path, policy: &DestPolicy) -> Result<(), PathError> 
     // The check judged the bare name, so the create acts on it too, or a dry run and the live run
     // could disagree about `dir/.`.
     let bare = without_trailing_separator(dir);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "true means a directory is there; false, for any reason, only runs the three-state check again, so it licenses nothing by itself"
+    )]
     if bare.is_dir() {
         return Ok(()); // already exists — nothing to create
     }
@@ -1207,6 +1211,10 @@ fn replace(
         Ok(()) => Ok(()),
         Err(source) => {
             // Ours to remove, since `create_new` made it.  The error reported is the write's.
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "the temp file is ours and the write's error is the one reported, so a failed removal has nowhere to go"
+            )]
             let _ = fs::remove_file(&temp);
             Err(write_error(path, source))
         }
@@ -1330,6 +1338,10 @@ fn remove_if_made(made: fs::File, path: &Path) {
     };
     if still_made {
         // Removed while it is still open, so its inode cannot be reused for another file meanwhile.
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "the write's error is the one reported, so a failed removal has nowhere to go; the file is ours by device and inode on Unix, and elsewhere it is removed by name, as the README's Known limitations says of Windows"
+        )]
         let _ = fs::remove_file(path);
     }
     drop(made);
@@ -1585,6 +1597,14 @@ fn floor_check_chain(path: &Path) -> Result<Vec<PathBuf>, PathError> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests build and assert on fixtures in a temp dir, and assert that a made-up mount point is absent"
+)]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "a guard restoring the cwd or a mode has nowhere to report a failure, and tmp clears an earlier run's leftovers as best it can"
+)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
