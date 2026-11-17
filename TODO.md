@@ -84,8 +84,8 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   volume, as the OS reports it, so a tool must prove the volume first.  Catch it in the probe.
 
 - [ ] [plan-0023](plans/plan-0023-a-dry-run-that-touches-nothing.md) — **a dry run that touches
-  nothing, metadata included**: `dry_run_writes_nothing` also compares permissions, inode, and
-  modification time.  It grows a public test API’s contract.
+  nothing, metadata included**: `dry_run_writes_nothing` also compares permissions and a regular
+  file’s modification time.  It grows a public test API’s contract.
 
 ## Smaller items
 

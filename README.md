@@ -438,8 +438,8 @@ weighing the crate finds them in one place.
   checked against the table, not every run in the tool’s tests.  `dry_run_writes_nothing` compares
   each path’s type, a file’s bytes, and a link’s target, so a run that rewrites a file with the same
   bytes, touches it, or changes its permissions passes; a later version may compare those too.  A
-  link at `tree` is followed, so a run that moves `tree` and links its name to the new place passes
-  as well.
+  file the run makes and removes again, such as a lock file, is not seen either.  A link at `tree`
+  is followed, so a run that moves `tree` and links its name to the new place passes as well.
 - **On Windows:** there is no `SIGPIPE`, so `reset_sigpipe` does nothing; a volume mounted into an
   empty NTFS folder is not detected; `write_file` is untested with a device such as `NUL`, and
   most likely fails to write one, since the standard library’s file type reports a device there as
