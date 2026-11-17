@@ -83,9 +83,6 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   tell” below a missing mount point**: `presence` answers `Absent` for a path on an unmounted
   volume, as the OS reports it, so a tool must prove the volume first.  Catch it in the probe.
 
-- [ ] [plan-0022](plans/plan-0022-exit-table-refuses-101.md) — **`ExitTable` refuses 101**, a Rust
-  panic’s code, which the `testing` helpers fail whatever the table says.  A breaking change.
-
 - [ ] [plan-0023](plans/plan-0023-a-dry-run-that-touches-nothing.md) — **a dry run that touches
   nothing, metadata included**: `dry_run_writes_nothing` also compares permissions, inode, and
   modification time.  It grows a public test API’s contract.
