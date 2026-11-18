@@ -35,13 +35,13 @@ predecessor at 0.5.24, so IDs continue from `bugs/FLOOR` and `plans/FLOOR`.
   contract tests (part 4, the last).  0.6.6 was held, by the maintainer’s choice on 16-Nov-2026, to
   go out with part 4, so it was never published on its own.
 
-- [ ] **Publish 0.6.8**, which raises the minimum Rust version to 1.81, for the `#[expect]`
-  attributes the lint set asks for (`[lints.clippy]` in `Cargo.toml`, with `clippy.toml`).  It
-  waits on the maintainer, who may call it 0.7.0 instead.  Cargo’s SemVer guide files a raised
-  minimum Rust version as possibly-breaking, and recommends treating it as a minor change, which
-  in a 0.y.z crate is a z bump, as here.  But the Cargo of Rust 1.79 and 1.80 resolves without
-  reading `rust-version`, so a project there that runs `cargo update` would take 0.6.8 and fail
-  to build.
+- [x] **0.6.8 is on crates.io** (17-Nov-2026), tagged `cli-contract-v0.6.8`.  It raises the
+  minimum Rust version to 1.81, for the `#[expect]` attributes the lint set asks for
+  (`[lints.clippy]` in `Cargo.toml`, with `clippy.toml`).  The maintainer chose 0.6.8 over 0.7.0
+  on 17-Nov-2026.  Cargo’s SemVer guide files a raised minimum Rust version as possibly-breaking,
+  and recommends treating it as a minor change, which in a 0.y.z crate is a z bump.  But the
+  Cargo of Rust 1.79 and 1.80 resolves without reading `rust-version`, so a project there that
+  runs `cargo update` takes 0.6.8 and fails to build until it pins 0.6.7.
 
 - [ ] **Pin that the two `..` checks agree**: `floor_check_chain` and `dotdot_after_missing` each
   decide “a `..` after a level that does not exist” their own way, and only bug-0045’s path is
